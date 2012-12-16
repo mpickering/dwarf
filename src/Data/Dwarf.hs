@@ -168,8 +168,8 @@ getDwarfUnitLength der = do
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Intermediate data structure for a partial DwarfReader.
 data DwarfEndianReader = DwarfEndianReader
-  { _derEndianess :: Endianess
-  , _derGetW16 :: Get Word16
+  { derEndianess :: Endianess
+  , derGetW16 :: Get Word16
   , derGetW32 :: Get Word32
   , derGetW64 :: Get Word64
   }
@@ -177,46 +177,64 @@ dwarfEndianReader :: Endianess -> DwarfEndianReader
 dwarfEndianReader LittleEndian = DwarfEndianReader LittleEndian getWord16le getWord32le getWord64le
 dwarfEndianReader BigEndian    = DwarfEndianReader BigEndian    getWord16be getWord32be getWord64be
 
+instance Show DwarfEndianReader where
+  show der = "DwarfEndianReader " ++ show (derEndianess der)
+instance Eq DwarfEndianReader where
+    a1 == a2 = derEndianess a1 == derEndianess a2
+
 data DwarfEncoding = DwarfEncoding32 | DwarfEncoding64
   deriving (Eq, Ord, Read, Show)
 
 -- Intermediate data structure for a partial DwarfReader.
 data DwarfEndianSizeReader = DwarfEndianSizeReader
-  { _desrEndianess :: Endianess
-  , desrGetW16 :: Get Word16
-  , _desrGetW32 :: Get Word32
-  , _desrGetW64 :: Get Word64
-  , _desrEncoding :: DwarfEncoding
-  , _desrMaxWord :: Word64
-  , desrGetSize :: Get Word64
+  { desrEndianReader :: DwarfEndianReader
+  , desrEncoding :: DwarfEncoding
+  , desrLargestOffset :: Word64
+  , desrGetDwarfOffset :: Get Word64
   }
 dwarfEndianSizeReader :: DwarfEncoding -> DwarfEndianReader -> DwarfEndianSizeReader
-dwarfEndianSizeReader DwarfEncoding64 (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 DwarfEncoding64 0xffffffffffffffff w64
-dwarfEndianSizeReader DwarfEncoding32 (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 DwarfEncoding32 0xffffffff (fromIntegral <$> w32)
+dwarfEndianSizeReader DwarfEncoding64 der = DwarfEndianSizeReader der DwarfEncoding64 0xffffffffffffffff (derGetW64 der)
+dwarfEndianSizeReader DwarfEncoding32 der = DwarfEndianSizeReader der DwarfEncoding32 0xffffffff (fromIntegral <$> derGetW32 der)
+
+instance Show DwarfEndianSizeReader where
+    show desr = "DwarfEndianSizeReader " ++ show (desrEndianReader desr) ++ " " ++ show (desrEncoding desr)
+instance Eq DwarfEndianSizeReader where
+    a1 == a2 = (desrEndianReader a1, desrEncoding a1) == (desrEndianReader a2, desrEncoding a2)
 
 data TargetSize = TargetSize32 | TargetSize64
   deriving (Eq, Ord, Read, Show)
 
 -- | Type containing functions and data needed for decoding DWARF information.
 data DwarfReader = DwarfReader
-    { drEndianess          :: Endianess
-    , drDwarf64               :: DwarfEncoding
+    { drDesr                  :: DwarfEndianSizeReader
     , drTarget64              :: TargetSize
-    , drLargestOffset         :: Word64     -- ^ Largest permissible file offset.
     , drLargestTargetAddress  :: Word64     -- ^ Largest permissible target address.
-    , drGetWord16             :: Get Word16 -- ^ Action for reading a 16-bit word.
-    , drGetWord32             :: Get Word32 -- ^ Action for reading a 32-bit word.
-    , drGetWord64             :: Get Word64 -- ^ Action for reading a 64-bit word.
-    , drGetDwarfOffset        :: Get Word64 -- ^ Action for reading a offset for the DWARF file.
     , drGetDwarfTargetAddress :: Get Word64 -- ^ Action for reading a pointer for the target machine.
     }
 instance Show DwarfReader where
-    show dr = "DwarfReader " ++ show (drEndianess dr) ++ " " ++ show (drDwarf64 dr) ++ " " ++ show (drTarget64 dr)
+    show dr = "DwarfReader " ++ show (drDesr dr) ++ " " ++ show (drTarget64 dr)
 instance Eq DwarfReader where
-    a1 == a2 = (drEndianess a1 == drEndianess a2) && (drDwarf64 a1 == drDwarf64 a2) && (drTarget64 a1 == drTarget64 a2)
+    a1 == a2 = (drDesr a1, drTarget64 a1) == (drDesr a2, drTarget64 a2)
 dwarfReader :: TargetSize -> DwarfEndianSizeReader -> DwarfReader
-dwarfReader TargetSize64 (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d TargetSize64 lo 0xffffffffffffffff w16 w32 w64 sz w64
-dwarfReader TargetSize32 (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d TargetSize32 lo 0xffffffff w16 w32 w64 sz (fromIntegral <$> w32)
+dwarfReader TargetSize64 desr = DwarfReader desr TargetSize64 0xffffffffffffffff (desrGetW64 desr)
+dwarfReader TargetSize32 desr = DwarfReader desr TargetSize32 0xffffffff         $ fromIntegral <$> desrGetW32 desr
+
+desrGetW16 :: DwarfEndianSizeReader -> Get Word16
+desrGetW16 = derGetW16 . desrEndianReader
+desrGetW32 :: DwarfEndianSizeReader -> Get Word32
+desrGetW32 = derGetW32 . desrEndianReader
+desrGetW64 :: DwarfEndianSizeReader -> Get Word64
+desrGetW64 = derGetW64 . desrEndianReader
+drGetW16 :: DwarfReader -> Get Word16
+drGetW16 = desrGetW16 . drDesr
+drGetW32 :: DwarfReader -> Get Word32
+drGetW32 = desrGetW32 . drDesr
+drGetW64 :: DwarfReader -> Get Word64
+drGetW64 = desrGetW64 . drDesr
+drGetDwarfOffset :: DwarfReader -> Get Word64
+drGetDwarfOffset = desrGetDwarfOffset . drDesr
+drLargestOffset :: DwarfReader -> Word64
+drLargestOffset = desrLargestOffset . drDesr
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
@@ -225,21 +243,21 @@ getForm :: DwarfReader -> B.ByteString -> Word64 -> DW_FORM -> Get DW_ATVAL
 getForm dr str cu form = case form of
   DW_FORM_addr      -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetDwarfTargetAddress dr
   DW_FORM_block1    -> DW_ATVAL_BLOB <$> (fromIntegral <$> getWord8        >>= getByteString)
-  DW_FORM_block2    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetWord16 dr    >>= getByteString)
-  DW_FORM_block4    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetWord32 dr    >>= getByteString)
+  DW_FORM_block2    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetW16 dr  >>= getByteString)
+  DW_FORM_block4    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetW32 dr  >>= getByteString)
   DW_FORM_block     -> DW_ATVAL_BLOB <$> (fromIntegral <$> getULEB128      >>= getByteString)
   DW_FORM_data1     -> pure (DW_ATVAL_UINT . fromIntegral) <*> getWord8
-  DW_FORM_data2     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetWord16 dr
-  DW_FORM_data4     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetWord32 dr
-  DW_FORM_data8     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetWord64 dr
+  DW_FORM_data2     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetW16 dr
+  DW_FORM_data4     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetW32 dr
+  DW_FORM_data8     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetW64 dr
   DW_FORM_udata     -> pure DW_ATVAL_UINT <*> getULEB128
   DW_FORM_sdata     -> pure DW_ATVAL_INT <*> getSLEB128
   DW_FORM_flag      -> pure (DW_ATVAL_BOOL . (/= 0)) <*> getWord8
   DW_FORM_string    -> pure DW_ATVAL_STRING <*> getNullTerminatedString
   DW_FORM_ref1      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getWord8
-  DW_FORM_ref2      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetWord16 dr
-  DW_FORM_ref4      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetWord32 dr
-  DW_FORM_ref8      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetWord64 dr
+  DW_FORM_ref2      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetW16 dr
+  DW_FORM_ref4      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetW32 dr
+  DW_FORM_ref8      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetW64 dr
   DW_FORM_ref_udata -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getULEB128
   DW_FORM_ref_addr  -> pure DW_ATVAL_UINT <*> drGetDwarfOffset dr
   DW_FORM_indirect  -> getULEB128 >>= getForm dr str cu . dw_form
@@ -322,7 +340,7 @@ getDieCus cu_lsibling odr abbrev_section str_section = do
         cu_offset       <- fromIntegral <$> Get.bytesRead
         (desr, _) <- getDwarfUnitLength odr
         _version        <- desrGetW16 desr
-        abbrev_offset   <- desrGetSize desr
+        abbrev_offset   <- desrGetDwarfOffset desr
         addr_size       <- getWord8
         dr              <- case addr_size of
                             4 -> pure $ dwarfReader TargetSize32 desr
@@ -383,7 +401,7 @@ getNameLookupTable target64 odr = do
      else do
         (der, _)          <- getDwarfUnitLength odr
         let dr            = dwarfReader target64 der
-        _version          <- drGetWord16 dr
+        _version          <- drGetW16 dr
         debug_info_offset <- drGetDwarfOffset dr
         _debug_info_length <- drGetDwarfOffset dr
         pubNames          <- M.fromListWith (++) <$> getNameLookupEntries dr debug_info_offset
@@ -411,15 +429,15 @@ getAddressRangeTable target64 odr = do
      else do
         (der, _)          <- getDwarfUnitLength odr
         let dr            = dwarfReader target64 der
-        _version          <- drGetWord16 dr
+        _version          <- drGetW16 dr
         debug_info_offset <- drGetDwarfOffset dr
         address_size      <- fromIntegral <$> getWord8
         _segment_size     <- getWord8
         bytes_read        <- Get.bytesRead
         Get.skip $ fromIntegral (2 * address_size - (bytes_read `mod` (2 * address_size)))
         address_ranges    <- case address_size of
-                            4 -> whileM (/= (0, 0)) $ (,) <$> (fromIntegral <$> drGetWord32 dr) <*> (fromIntegral <$> drGetWord32 dr)
-                            8 -> whileM (/= (0, 0)) $ (,) <$> drGetWord64 dr <*> drGetWord64 dr
+                            4 -> whileM (/= (0, 0)) $ (,) <$> (fromIntegral <$> drGetW32 dr) <*> (fromIntegral <$> drGetW32 dr)
+                            8 -> whileM (/= (0, 0)) $ (,) <$> drGetW64 dr <*> drGetW64 dr
                             n -> fail $ "Unrecognized address size " ++ show n ++ " in .debug_aranges section."
         rest              <- getAddressRangeTable target64 odr
         pure $ (address_ranges, debug_info_offset) : rest
@@ -470,7 +488,7 @@ getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromI
           getDW_LNI_ 0x06 = pure DW_LNS_negate_stmt
           getDW_LNI_ 0x07 = pure DW_LNS_set_basic_block
           getDW_LNI_ 0x08 = pure $ DW_LNS_const_add_pc (minimum_instruction_length * fromIntegral ((255 - opcode_base) `div` line_range))
-          getDW_LNI_ 0x09 = pure DW_LNS_fixed_advance_pc <*> fromIntegral <$> drGetWord16 dr
+          getDW_LNI_ 0x09 = pure DW_LNS_fixed_advance_pc <*> fromIntegral <$> drGetW16 dr
           getDW_LNI_ 0x0a = pure DW_LNS_set_prologue_end
           getDW_LNI_ 0x0b = pure DW_LNS_set_epilogue_begin
           getDW_LNI_ 0x0c = pure DW_LNS_set_isa <*> getULEB128
@@ -583,7 +601,7 @@ getDwarfLine target64 der = do
     (desr, sectLen)            <- getDwarfUnitLength der
     startLen <- Get.bytesRead
     let dr                     = dwarfReader target64 desr
-    _version                   <- drGetWord16 dr
+    _version                   <- drGetW16 dr
     _header_length             <- drGetDwarfOffset dr
     minimum_instruction_length <- getWord8
     default_is_stmt            <- (/= 0) <$> getWord8
@@ -673,8 +691,8 @@ getDW_CFA dr = do
             0x00 -> pure DW_CFA_nop
             0x01 -> pure DW_CFA_set_loc <*> drGetDwarfTargetAddress dr
             0x02 -> pure DW_CFA_advance_loc1 <*> getWord8
-            0x03 -> pure DW_CFA_advance_loc2 <*> drGetWord16 dr
-            0x04 -> pure DW_CFA_advance_loc4 <*> drGetWord32 dr
+            0x03 -> pure DW_CFA_advance_loc2 <*> drGetW16 dr
+            0x04 -> pure DW_CFA_advance_loc4 <*> drGetW32 dr
             0x05 -> pure DW_CFA_offset_extended <*> getULEB128 <*> getULEB128
             0x06 -> pure DW_CFA_restore_extended <*> getULEB128
             0x07 -> pure DW_CFA_undefined <*> getULEB128
@@ -791,7 +809,7 @@ getDwarfLoc dr = do
      else if begin == drLargestTargetAddress dr then
         pure (Left end :) <*> getDwarfLoc dr
       else do
-        len  <- fromIntegral <$> drGetWord16 dr
+        len  <- fromIntegral <$> drGetW16 dr
         expr <- getByteString len
         pure (Right (begin, end, expr) :) <*> getDwarfLoc dr
 
@@ -1314,12 +1332,12 @@ getDW_OP dr = getWord8 >>= getDW_OP_
           getDW_OP_ 0x06 = pure DW_OP_deref
           getDW_OP_ 0x08 = pure DW_OP_const1u <*> fromIntegral <$> getWord8
           getDW_OP_ 0x09 = pure DW_OP_const1s <*> fromIntegral <$> getWord8
-          getDW_OP_ 0x0a = pure DW_OP_const2u <*> fromIntegral <$> drGetWord16 dr
-          getDW_OP_ 0x0b = pure DW_OP_const2s <*> fromIntegral <$> drGetWord16 dr
-          getDW_OP_ 0x0c = pure DW_OP_const4u <*> fromIntegral <$> drGetWord32 dr
-          getDW_OP_ 0x0d = pure DW_OP_const4s <*> fromIntegral <$> drGetWord32 dr
-          getDW_OP_ 0x0e = pure DW_OP_const8u <*> drGetWord64 dr
-          getDW_OP_ 0x0f = pure DW_OP_const8s <*> fromIntegral <$> drGetWord64 dr
+          getDW_OP_ 0x0a = pure DW_OP_const2u <*> fromIntegral <$> drGetW16 dr
+          getDW_OP_ 0x0b = pure DW_OP_const2s <*> fromIntegral <$> drGetW16 dr
+          getDW_OP_ 0x0c = pure DW_OP_const4u <*> fromIntegral <$> drGetW32 dr
+          getDW_OP_ 0x0d = pure DW_OP_const4s <*> fromIntegral <$> drGetW32 dr
+          getDW_OP_ 0x0e = pure DW_OP_const8u <*> drGetW64 dr
+          getDW_OP_ 0x0f = pure DW_OP_const8s <*> fromIntegral <$> drGetW64 dr
           getDW_OP_ 0x10 = pure DW_OP_constu  <*> getULEB128
           getDW_OP_ 0x11 = pure DW_OP_consts  <*> getSLEB128
           getDW_OP_ 0x12 = pure DW_OP_dup
@@ -1344,8 +1362,8 @@ getDW_OP dr = getWord8 >>= getDW_OP_
           getDW_OP_ 0x25 = pure DW_OP_shr
           getDW_OP_ 0x26 = pure DW_OP_shra
           getDW_OP_ 0x27 = pure DW_OP_xor
-          getDW_OP_ 0x2f = pure DW_OP_skip <*> fromIntegral <$> drGetWord16 dr
-          getDW_OP_ 0x28 = pure DW_OP_bra  <*> fromIntegral <$> drGetWord16 dr
+          getDW_OP_ 0x2f = pure DW_OP_skip <*> fromIntegral <$> drGetW16 dr
+          getDW_OP_ 0x28 = pure DW_OP_bra  <*> fromIntegral <$> drGetW16 dr
           getDW_OP_ 0x29 = pure DW_OP_eq
           getDW_OP_ 0x2a = pure DW_OP_ge
           getDW_OP_ 0x2b = pure DW_OP_gt
@@ -1456,8 +1474,8 @@ getDW_OP dr = getWord8 >>= getDW_OP_
           getDW_OP_ 0x95 = pure DW_OP_xderef_size <*> getWord8
           getDW_OP_ 0x96 = pure DW_OP_nop
           getDW_OP_ 0x97 = pure DW_OP_push_object_address
-          getDW_OP_ 0x98 = pure DW_OP_call2 <*> drGetWord16 dr
-          getDW_OP_ 0x99 = pure DW_OP_call4 <*> drGetWord32 dr
+          getDW_OP_ 0x98 = pure DW_OP_call2 <*> drGetW16 dr
+          getDW_OP_ 0x99 = pure DW_OP_call4 <*> drGetW32 dr
           getDW_OP_ 0x9a = pure DW_OP_call_ref <*> drGetDwarfTargetAddress dr
           getDW_OP_ 0x9b = pure DW_OP_form_tls_address
           getDW_OP_ 0x9c = pure DW_OP_call_frame_cfa
