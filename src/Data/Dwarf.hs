@@ -146,11 +146,11 @@ getDwarfUnitLength dr@(DwarfEndianReader e w16 w32 w64) = do
     size <- w32
     if size == 0xffffffff then do
         size <- w64
-        pure (dwarfEndianSizeReader True dr, size)
+        pure (dwarfEndianSizeReader DwarfEncoding64 dr, size)
      else if size >= 0xffffff00 then
         fail ("Invalid DWARF size " ++ show size)
       else
-        pure (dwarfEndianSizeReader False dr, fromIntegral size)
+        pure (dwarfEndianSizeReader DwarfEncoding32 dr, fromIntegral size)
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- DWARF decoder records.
@@ -160,10 +160,13 @@ data DwarfEndianReader = DwarfEndianReader Endianess (Get Word16) (Get Word32) (
 dwarfEndianReader LittleEndian = DwarfEndianReader LittleEndian getWord16le getWord32le getWord64le
 dwarfEndianReader BigEndian    = DwarfEndianReader BigEndian    getWord16be getWord32be getWord64be
 
+data DwarfEncoding = DwarfEncoding32 | DwarfEncoding64
+  deriving (Eq, Ord, Read, Show)
+
 -- Intermediate data structure for a partial DwarfReader.
-data DwarfEndianSizeReader = DwarfEndianSizeReader Endianess (Get Word16) (Get Word32) (Get Word64) Bool Word64 (Get Word64)
-dwarfEndianSizeReader True  (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 True  0xffffffffffffffff w64
-dwarfEndianSizeReader False (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 False 0xffffffff (fromIntegral <$> w32)
+data DwarfEndianSizeReader = DwarfEndianSizeReader Endianess (Get Word16) (Get Word32) (Get Word64) DwarfEncoding Word64 (Get Word64)
+dwarfEndianSizeReader DwarfEncoding64 (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 DwarfEncoding64 0xffffffffffffffff w64
+dwarfEndianSizeReader DwarfEncoding32 (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 DwarfEncoding32 0xffffffff (fromIntegral <$> w32)
 
 data TargetSize = TargetSize32 | TargetSize64
   deriving (Eq, Ord, Read, Show)
@@ -171,7 +174,7 @@ data TargetSize = TargetSize32 | TargetSize64
 -- | Type containing functions and data needed for decoding DWARF information.
 data DwarfReader = DwarfReader
     { littleEndian          :: Endianess
-    , dwarf64               :: Bool       -- ^ True for 64-bit DWARF encoding.
+    , dwarf64               :: DwarfEncoding
     , target64              :: TargetSize
     , largestOffset         :: Word64     -- ^ Largest permissible file offset.
     , largestTargetAddress  :: Word64     -- ^ Largest permissible target address.
