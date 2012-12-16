@@ -165,11 +165,14 @@ data DwarfEndianSizeReader = DwarfEndianSizeReader Endianess (Get Word16) (Get W
 dwarfEndianSizeReader True  (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 True  0xffffffffffffffff w64
 dwarfEndianSizeReader False (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 False 0xffffffff (fromIntegral <$> w32)
 
+data TargetSize = TargetSize32 | TargetSize64
+  deriving (Eq, Ord, Read, Show)
+
 -- | Type containing functions and data needed for decoding DWARF information.
 data DwarfReader = DwarfReader
-    { littleEndian          :: Endianess  -- ^ True for little endian encoding.
+    { littleEndian          :: Endianess
     , dwarf64               :: Bool       -- ^ True for 64-bit DWARF encoding.
-    , target64              :: Bool       -- ^ True for 64-bit pointers on target machine.
+    , target64              :: TargetSize
     , largestOffset         :: Word64     -- ^ Largest permissible file offset.
     , largestTargetAddress  :: Word64     -- ^ Largest permissible target address.
     , getWord16             :: Get Word16 -- ^ Action for reading a 16-bit word.
@@ -182,8 +185,8 @@ instance Show DwarfReader where
     show dr = "DwarfReader " ++ show (littleEndian dr) ++ " " ++ show (dwarf64 dr) ++ " " ++ show (target64 dr)
 instance Eq DwarfReader where
     a1 == a2 = (littleEndian a1 == littleEndian a2) && (dwarf64 a1 == dwarf64 a2) && (target64 a1 == target64 a2)
-dwarfReader True  (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d True  lo 0xffffffffffffffff w16 w32 w64 sz w64
-dwarfReader False (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d False lo 0xffffffff w16 w32 w64 sz (fromIntegral <$> w32)
+dwarfReader TargetSize64 (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d TargetSize64 lo 0xffffffffffffffff w16 w32 w64 sz w64
+dwarfReader TargetSize32 (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d TargetSize32 lo 0xffffffff w16 w32 w64 sz (fromIntegral <$> w32)
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
@@ -286,8 +289,8 @@ getDieCus cu_lsibling odr abbrev_section str_section = do
         abbrev_offset   <- sz
         addr_size       <- getWord8
         let dr          = case addr_size of
-                            4 -> dwarfReader False der
-                            8 -> dwarfReader True der
+                            4 -> dwarfReader TargetSize32 der
+                            8 -> dwarfReader TargetSize64 der
         cu_die_offset   <- fromIntegral <$> Get.bytesRead
         cu_abbr_num     <- getULEB128
         let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
@@ -314,7 +317,7 @@ infoCompileUnit infoSection offset =
     _ -> offset + 11
 
 -- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
-parseDwarfInfo :: Endianess             -- ^ True for little endian target addresses. False for big endian.
+parseDwarfInfo :: Endianess
                -> B.ByteString     -- ^ ByteString for the .debug_info section.
                -> B.ByteString     -- ^ ByteString for the .debug_abbrev section.
                -> B.ByteString     -- ^ ByteString for the .debug_str section.
@@ -335,7 +338,7 @@ getNameLookupEntries dr cu_offset = do
         rest <- getNameLookupEntries dr cu_offset
         pure $ (name, [cu_offset + die_offset]) : rest
 
-getNameLookupTable :: Bool -> DwarfEndianReader -> Get [M.Map String [Word64]]
+getNameLookupTable :: TargetSize -> DwarfEndianReader -> Get [M.Map String [Word64]]
 getNameLookupTable target64 odr = do
     empty <- Get.isEmpty
     if empty then
@@ -351,13 +354,13 @@ getNameLookupTable target64 odr = do
         pure $ pubNames : rest
 
 -- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a debug info id in the DwarfInfo.
-parseDwarfPubnames :: Endianess -> Bool -> B.ByteString -> M.Map String [Word64]
+parseDwarfPubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [Word64]
 parseDwarfPubnames littleEndian target64 pubnames_section =
     let dr = dwarfEndianReader littleEndian
     in M.unionsWith (++) $ runGet (getNameLookupTable target64 dr) $ L.fromChunks [pubnames_section]
 
 -- | Parses the .debug_pubtypes section (as ByteString) into a map from a type name to a debug info id in the DwarfInfo.
-parseDwarfPubtypes :: Endianess -> Bool -> B.ByteString -> M.Map String [Word64]
+parseDwarfPubtypes :: Endianess -> TargetSize -> B.ByteString -> M.Map String [Word64]
 parseDwarfPubtypes littleEndian target64 pubtypes_section =
     let dr = dwarfEndianReader littleEndian
     in M.unionsWith (++) $ runGet (getNameLookupTable target64 dr) $ L.fromChunks [pubtypes_section]
@@ -384,7 +387,7 @@ getAddressRangeTable target64 odr = do
         pure $ (address_ranges, debug_info_offset) : rest
 
 -- | Parses  the .debug_aranges section (as ByteString) into a map from an address range to a debug info id that indexes the DwarfInfo.
-parseDwarfAranges :: Endianess -> Bool -> B.ByteString -> [([(Word64, Word64)], Word64)]
+parseDwarfAranges :: Endianess -> TargetSize -> B.ByteString -> [([(Word64, Word64)], Word64)]
 parseDwarfAranges littleEndian target64 aranges_section =
     let dr = dwarfEndianReader littleEndian
     in runGet (getAddressRangeTable target64 dr) $ L.fromChunks [aranges_section]
@@ -532,7 +535,7 @@ getDebugLineFileNames = do
 
 -- | Retrieves the line information for a DIE from a given substring of the .debug_line section. The offset
 -- into the .debug_line section is obtained from the DW_AT_stmt_list attribute of a DIE.
-parseDwarfLine :: Endianess -> Bool -> B.ByteString -> ([String], [DW_LNE])
+parseDwarfLine :: Endianess -> TargetSize -> B.ByteString -> ([String], [DW_LNE])
 parseDwarfLine littleEndian target64 bs =
     let dr = dwarfEndianReader littleEndian
     in runGet (getDwarfLine target64 dr) (L.fromChunks [bs])
@@ -705,11 +708,12 @@ getCIEFDE littleEndian target64 = do
         pure $ DW_FDE cie_id initial_location address_range instructions
 
 -- | Parse the .debug_frame section into a list of DW_CIEFDE records.
-parseDwarfFrame :: Endianess    -- ^ True for little endian data. False for big endian.
-                -> Bool         -- ^ True for 64-bit target addresses. False of 32-bit target addresses.
+parseDwarfFrame :: Endianess
+                -> TargetSize
                 -> B.ByteString -- ^ ByteString for the .debug_frame section.
                 -> [DW_CIEFDE]
-parseDwarfFrame littleEndian target64 bs = runGet (getWhileNotEmpty $ getCIEFDE littleEndian target64) (L.fromChunks [bs])
+parseDwarfFrame littleEndian target64 bs =
+  runGet (getWhileNotEmpty $ getCIEFDE littleEndian target64) (L.fromChunks [bs])
 
 -- Section 7.23 - Non-contiguous Address Ranges
 -- | Retrieves the non-contiguous address ranges for a compilation unit from a given substring of the .debug_ranges section. The offset
