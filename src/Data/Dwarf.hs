@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 -- | Parses the DWARF 2 and DWARF 3 specifications at http://www.dwarfstd.org given
 -- the debug sections in ByteString form.
 module Data.Dwarf ( parseDwarfInfo
@@ -24,7 +25,7 @@ module Data.Dwarf ( parseDwarfInfo
                   , dw_dsc
                   , (!?)
                   , DwarfReader(..)
-                  , DIE(..)
+                  , DIE(..), dieId, dieParent, dieChildren, dieSiblingLeft, dieSiblingRight, dieTag, dieAttributes, dieReader
                   , DW_CFA(..)
                   , DW_MACINFO(..)
                   , DW_CIEFDE(..)
@@ -51,6 +52,7 @@ module Data.Dwarf ( parseDwarfInfo
 import Control.Applicative (Applicative(..), (<$>))
 import Control.Arrow ((&&&), (***))
 import Control.Lens (SimpleLensLike)
+import Control.Lens.TH (makeLenses)
 import Control.Monad (replicateM)
 import Data.Binary (Binary(..), getWord8)
 import Data.Binary.Get (getByteString, getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get, runGet)
@@ -248,6 +250,61 @@ drGetDwarfOffset = desrGetDwarfOffset . drDesr
 drLargestOffset :: DwarfReader -> Word64
 drLargestOffset = desrLargestOffset . drDesr
 
+data DW_FORM
+    = DW_FORM_addr              -- ^ address
+    | DW_FORM_block2 -- ^ block
+    | DW_FORM_block4 -- ^ block
+    | DW_FORM_data2 -- ^ constant
+    | DW_FORM_data4 -- ^ constant, lineptr, loclistptr, macptr, rangelistptr
+    | DW_FORM_data8 -- ^ constant, lineptr, loclistptr, macptr, rangelistptr
+    | DW_FORM_string -- ^ string
+    | DW_FORM_block -- ^ block
+    | DW_FORM_block1 -- ^ block
+    | DW_FORM_data1 -- ^ constant
+    | DW_FORM_flag -- ^ flag
+    | DW_FORM_sdata -- ^ constant
+    | DW_FORM_strp -- ^ string
+    | DW_FORM_udata -- ^ constant
+    | DW_FORM_ref_addr            -- ^ reference
+    | DW_FORM_ref1                -- ^ reference
+    | DW_FORM_ref2                -- ^ reference
+    | DW_FORM_ref4                -- ^ reference
+    | DW_FORM_ref8                -- ^ reference
+    | DW_FORM_ref_udata           -- ^ reference
+    | DW_FORM_indirect            -- ^ (see Section 7.5.3 of DWARF3 specification)
+    deriving (Show, Eq)
+dw_form :: Word64 -> DW_FORM
+dw_form 0x01 = DW_FORM_addr
+dw_form 0x03 = DW_FORM_block2
+dw_form 0x04 = DW_FORM_block4
+dw_form 0x05 = DW_FORM_data2
+dw_form 0x06 = DW_FORM_data4
+dw_form 0x07 = DW_FORM_data8
+dw_form 0x08 = DW_FORM_string
+dw_form 0x09 = DW_FORM_block
+dw_form 0x0a = DW_FORM_block1
+dw_form 0x0b = DW_FORM_data1
+dw_form 0x0c = DW_FORM_flag
+dw_form 0x0d = DW_FORM_sdata
+dw_form 0x0e = DW_FORM_strp
+dw_form 0x0f = DW_FORM_udata
+dw_form 0x10 = DW_FORM_ref_addr
+dw_form 0x11 = DW_FORM_ref1
+dw_form 0x12 = DW_FORM_ref2
+dw_form 0x13 = DW_FORM_ref4
+dw_form 0x14 = DW_FORM_ref8
+dw_form 0x15 = DW_FORM_ref_udata
+dw_form 0x16 = DW_FORM_indirect
+dw_form n    = error $ "Unrecognized DW_FORM " ++ show n
+
+data DW_ATVAL
+    = DW_ATVAL_INT    Int64
+    | DW_ATVAL_UINT   Word64
+    | DW_ATVAL_STRING String
+    | DW_ATVAL_BLOB   B.ByteString
+    | DW_ATVAL_BOOL   Bool
+    deriving (Show, Eq)
+
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -277,12 +334,253 @@ getForm dr str cu form = case form of
     offset <- fromIntegral <$> drGetDwarfOffset dr
     pure $ DW_ATVAL_STRING $ runGet getNullTerminatedString (L.fromChunks [B.drop offset str])
 
+data DW_AT
+    = DW_AT_sibling              -- ^ reference
+    | DW_AT_location             -- ^ block, loclistptr
+    | DW_AT_name                 -- ^ string
+    | DW_AT_ordering             -- ^ constant
+    | DW_AT_byte_size            -- ^ block, constant, reference
+    | DW_AT_bit_offset           -- ^ block, constant, reference
+    | DW_AT_bit_size             -- ^ block, constant, reference
+    | DW_AT_stmt_list            -- ^ lineptr
+    | DW_AT_low_pc               -- ^ address
+    | DW_AT_high_pc              -- ^ address
+    | DW_AT_language             -- ^ constant
+    | DW_AT_discr                -- ^ reference
+    | DW_AT_discr_value          -- ^ constant
+    | DW_AT_visibility           -- ^ constant
+    | DW_AT_import               -- ^ reference
+    | DW_AT_string_length        -- ^ block, loclistptr
+    | DW_AT_common_reference     -- ^ reference
+    | DW_AT_comp_dir             -- ^ string
+    | DW_AT_const_value          -- ^ block, constant, string
+    | DW_AT_containing_type      -- ^ reference
+    | DW_AT_default_value        -- ^ reference
+    | DW_AT_inline               -- ^ constant
+    | DW_AT_is_optional          -- ^ flag
+    | DW_AT_lower_bound          -- ^ block, constant, reference
+    | DW_AT_producer             -- ^ string
+    | DW_AT_prototyped           -- ^ flag
+    | DW_AT_return_addr          -- ^ block, loclistptr
+    | DW_AT_start_scope          -- ^ constant
+    | DW_AT_bit_stride           -- ^ constant
+    | DW_AT_upper_bound          -- ^ block, constant, reference
+    | DW_AT_abstract_origin      -- ^ reference
+    | DW_AT_accessibility        -- ^ constant
+    | DW_AT_address_class        -- ^ constant
+    | DW_AT_artificial           -- ^ flag
+    | DW_AT_base_types           -- ^ reference
+    | DW_AT_calling_convention   -- ^ constant
+    | DW_AT_count                -- ^ block, constant, reference
+    | DW_AT_data_member_location -- ^ block, constant, loclistptr
+    | DW_AT_decl_column          -- ^ constant
+    | DW_AT_decl_file            -- ^ constant
+    | DW_AT_decl_line            -- ^ constant
+    | DW_AT_declaration          -- ^ flag
+    | DW_AT_discr_list           -- ^ block
+    | DW_AT_encoding             -- ^ constant
+    | DW_AT_external             -- ^ flag
+    | DW_AT_frame_base           -- ^ block, loclistptr
+    | DW_AT_friend               -- ^ reference
+    | DW_AT_identifier_case      -- ^ constant
+    | DW_AT_macro_info           -- ^ macptr
+    | DW_AT_namelist_item        -- ^ block
+    | DW_AT_priority             -- ^ reference
+    | DW_AT_segment              -- ^ block, loclistptr
+    | DW_AT_specification        -- ^ reference
+    | DW_AT_static_link          -- ^ block, loclistptr
+    | DW_AT_type                 -- ^ reference
+    | DW_AT_use_location         -- ^ block, loclistptr
+    | DW_AT_variable_parameter   -- ^ flag
+    | DW_AT_virtuality           -- ^ constant
+    | DW_AT_vtable_elem_location -- ^ block, loclistptr
+    | DW_AT_allocated            -- ^ block, constant, reference
+    | DW_AT_associated           -- ^ block, constant, reference
+    | DW_AT_data_location        -- ^ block
+    | DW_AT_byte_stride          -- ^ block, constant, reference
+    | DW_AT_entry_pc             -- ^ address
+    | DW_AT_use_UTF8             -- ^ flag
+    | DW_AT_extension            -- ^ reference
+    | DW_AT_ranges               -- ^ rangelistptr
+    | DW_AT_trampoline           -- ^ address, flag, reference, string
+    | DW_AT_call_column          -- ^ constant
+    | DW_AT_call_file            -- ^ constant
+    | DW_AT_call_line            -- ^ constant
+    | DW_AT_description          -- ^ string
+    | DW_AT_binary_scale         -- ^ constant
+    | DW_AT_decimal_scale        -- ^ constant
+    | DW_AT_small                -- ^ reference
+    | DW_AT_decimal_sign         -- ^ constant
+    | DW_AT_digit_count          -- ^ constant
+    | DW_AT_picture_string       -- ^ string
+    | DW_AT_mutable              -- ^ flag
+    | DW_AT_threads_scaled       -- ^ flag
+    | DW_AT_explicit             -- ^ flag
+    | DW_AT_object_pointer       -- ^ reference
+    | DW_AT_endianity            -- ^ constant
+    | DW_AT_elemental            -- ^ flag
+    | DW_AT_return                 -- ^ flag
+    | DW_AT_recursive            -- ^ flag
+    | DW_AT_user Word64          -- ^ user extension
+    deriving (Show, Eq)
+dw_at :: Word64 -> DW_AT
+dw_at 0x01 = DW_AT_sibling
+dw_at 0x02 = DW_AT_location
+dw_at 0x03 = DW_AT_name
+dw_at 0x09 = DW_AT_ordering
+dw_at 0x0b = DW_AT_byte_size
+dw_at 0x0c = DW_AT_bit_offset
+dw_at 0x0d = DW_AT_bit_size
+dw_at 0x10 = DW_AT_stmt_list
+dw_at 0x11 = DW_AT_low_pc
+dw_at 0x12 = DW_AT_high_pc
+dw_at 0x13 = DW_AT_language
+dw_at 0x15 = DW_AT_discr
+dw_at 0x16 = DW_AT_discr_value
+dw_at 0x17 = DW_AT_visibility
+dw_at 0x18 = DW_AT_import
+dw_at 0x19 = DW_AT_string_length
+dw_at 0x1a = DW_AT_common_reference
+dw_at 0x1b = DW_AT_comp_dir
+dw_at 0x1c = DW_AT_const_value
+dw_at 0x1d = DW_AT_containing_type
+dw_at 0x1e = DW_AT_default_value
+dw_at 0x20 = DW_AT_inline
+dw_at 0x21 = DW_AT_is_optional
+dw_at 0x22 = DW_AT_lower_bound
+dw_at 0x25 = DW_AT_producer
+dw_at 0x27 = DW_AT_prototyped
+dw_at 0x2a = DW_AT_return_addr
+dw_at 0x2c = DW_AT_start_scope
+dw_at 0x2e = DW_AT_bit_stride
+dw_at 0x2f = DW_AT_upper_bound
+dw_at 0x31 = DW_AT_abstract_origin
+dw_at 0x32 = DW_AT_accessibility
+dw_at 0x33 = DW_AT_address_class
+dw_at 0x34 = DW_AT_artificial
+dw_at 0x35 = DW_AT_base_types
+dw_at 0x36 = DW_AT_calling_convention
+dw_at 0x37 = DW_AT_count
+dw_at 0x38 = DW_AT_data_member_location
+dw_at 0x39 = DW_AT_decl_column
+dw_at 0x3a = DW_AT_decl_file
+dw_at 0x3b = DW_AT_decl_line
+dw_at 0x3c = DW_AT_declaration
+dw_at 0x3d = DW_AT_discr_list
+dw_at 0x3e = DW_AT_encoding
+dw_at 0x3f = DW_AT_external
+dw_at 0x40 = DW_AT_frame_base
+dw_at 0x41 = DW_AT_friend
+dw_at 0x42 = DW_AT_identifier_case
+dw_at 0x43 = DW_AT_macro_info
+dw_at 0x44 = DW_AT_namelist_item
+dw_at 0x45 = DW_AT_priority
+dw_at 0x46 = DW_AT_segment
+dw_at 0x47 = DW_AT_specification
+dw_at 0x48 = DW_AT_static_link
+dw_at 0x49 = DW_AT_type
+dw_at 0x4a = DW_AT_use_location
+dw_at 0x4b = DW_AT_variable_parameter
+dw_at 0x4c = DW_AT_virtuality
+dw_at 0x4d = DW_AT_vtable_elem_location
+dw_at 0x4e = DW_AT_allocated
+dw_at 0x4f = DW_AT_associated
+dw_at 0x50 = DW_AT_data_location
+dw_at 0x51 = DW_AT_byte_stride
+dw_at 0x52 = DW_AT_entry_pc
+dw_at 0x53 = DW_AT_use_UTF8
+dw_at 0x54 = DW_AT_extension
+dw_at 0x55 = DW_AT_ranges
+dw_at 0x56 = DW_AT_trampoline
+dw_at 0x57 = DW_AT_call_column
+dw_at 0x58 = DW_AT_call_file
+dw_at 0x59 = DW_AT_call_line
+dw_at 0x5a = DW_AT_description
+dw_at 0x5b = DW_AT_binary_scale
+dw_at 0x5c = DW_AT_decimal_scale
+dw_at 0x5d = DW_AT_small
+dw_at 0x5e = DW_AT_decimal_sign
+dw_at 0x5f = DW_AT_digit_count
+dw_at 0x60 = DW_AT_picture_string
+dw_at 0x61 = DW_AT_mutable
+dw_at 0x62 = DW_AT_threads_scaled
+dw_at 0x63 = DW_AT_explicit
+dw_at 0x64 = DW_AT_object_pointer
+dw_at 0x65 = DW_AT_endianity
+dw_at 0x66 = DW_AT_elemental
+dw_at 0x67 = DW_AT_return
+dw_at 0x68 = DW_AT_recursive
+dw_at n | 0x2000 <= n && n <= 0x3fff = DW_AT_user n
+dw_at n = error $ "Unrecognized DW_AT " ++ show n
+
 data DW_ABBREV = DW_ABBREV
     { _abbrevNum       :: Word64
     , abbrevTag       :: DW_TAG
     , abbrevChildren  :: Bool
     , abbrevAttrForms :: [(DW_AT, DW_FORM)]
     }
+
+getDW_TAG :: Get DW_TAG
+getDW_TAG = getULEB128 >>= dw_tag
+    where dw_tag 0x01 = pure DW_TAG_array_type
+          dw_tag 0x02 = pure DW_TAG_class_type
+          dw_tag 0x03 = pure DW_TAG_entry_point
+          dw_tag 0x04 = pure DW_TAG_enumeration_type
+          dw_tag 0x05 = pure DW_TAG_formal_parameter
+          dw_tag 0x08 = pure DW_TAG_imported_declaration
+          dw_tag 0x0a = pure DW_TAG_label
+          dw_tag 0x0b = pure DW_TAG_lexical_block
+          dw_tag 0x0d = pure DW_TAG_member
+          dw_tag 0x0f = pure DW_TAG_pointer_type
+          dw_tag 0x10 = pure DW_TAG_reference_type
+          dw_tag 0x11 = pure DW_TAG_compile_unit
+          dw_tag 0x12 = pure DW_TAG_string_type
+          dw_tag 0x13 = pure DW_TAG_structure_type
+          dw_tag 0x15 = pure DW_TAG_subroutine_type
+          dw_tag 0x16 = pure DW_TAG_typedef
+          dw_tag 0x17 = pure DW_TAG_union_type
+          dw_tag 0x18 = pure DW_TAG_unspecified_parameters
+          dw_tag 0x19 = pure DW_TAG_variant
+          dw_tag 0x1a = pure DW_TAG_common_block
+          dw_tag 0x1b = pure DW_TAG_common_inclusion
+          dw_tag 0x1c = pure DW_TAG_inheritance
+          dw_tag 0x1d = pure DW_TAG_inlined_subroutine
+          dw_tag 0x1e = pure DW_TAG_module
+          dw_tag 0x1f = pure DW_TAG_ptr_to_member_type
+          dw_tag 0x20 = pure DW_TAG_set_type
+          dw_tag 0x21 = pure DW_TAG_subrange_type
+          dw_tag 0x22 = pure DW_TAG_with_stmt
+          dw_tag 0x23 = pure DW_TAG_access_declaration
+          dw_tag 0x24 = pure DW_TAG_base_type
+          dw_tag 0x25 = pure DW_TAG_catch_block
+          dw_tag 0x26 = pure DW_TAG_const_type
+          dw_tag 0x27 = pure DW_TAG_constant
+          dw_tag 0x28 = pure DW_TAG_enumerator
+          dw_tag 0x29 = pure DW_TAG_file_type
+          dw_tag 0x2a = pure DW_TAG_friend
+          dw_tag 0x2b = pure DW_TAG_namelist
+          dw_tag 0x2c = pure DW_TAG_namelist_item
+          dw_tag 0x2d = pure DW_TAG_packed_type
+          dw_tag 0x2e = pure DW_TAG_subprogram
+          dw_tag 0x2f = pure DW_TAG_template_type_parameter
+          dw_tag 0x30 = pure DW_TAG_template_value_parameter
+          dw_tag 0x31 = pure DW_TAG_thrown_type
+          dw_tag 0x32 = pure DW_TAG_try_block
+          dw_tag 0x33 = pure DW_TAG_variant_part
+          dw_tag 0x34 = pure DW_TAG_variable
+          dw_tag 0x35 = pure DW_TAG_volatile_type
+          dw_tag 0x36 = pure DW_TAG_dwarf_procedure
+          dw_tag 0x37 = pure DW_TAG_restrict_type
+          dw_tag 0x38 = pure DW_TAG_interface_type
+          dw_tag 0x39 = pure DW_TAG_namespace
+          dw_tag 0x3a = pure DW_TAG_imported_module
+          dw_tag 0x3b = pure DW_TAG_unspecified_type
+          dw_tag 0x3c = pure DW_TAG_partial_unit
+          dw_tag 0x3d = pure DW_TAG_imported_unit
+          dw_tag 0x3f = pure DW_TAG_condition
+          dw_tag 0x40 = pure DW_TAG_shared_type
+          dw_tag n | 0x4080 <= n && n <= 0xffff = fail $ "User DW_TAG data requires extension of parser for code " ++ show n
+          dw_tag n = fail $ "Unrecognized DW_TAG " ++ show n
 
 getAbbrevList :: Get [(Word64, DW_ABBREV)]
 getAbbrevList =
@@ -303,27 +601,9 @@ getAbbrevList =
 -- DWARF information entry and .debug_info section parsing.
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
--- TODO: Do we really want to maintain the siblings? We could go to
--- parent->children? or even always keep the parens in context and not
--- maintain that either?
-
--- | The dwarf information entries form a graph of nodes tagged with attributes. Please refer to the DWARF specification
--- for semantics. Although it looks like a tree, there can be attributes which have adjacency information which will
--- introduce cross-branch edges.
-data DIE = DIE
-    { dieId           :: Word64              -- ^ Unique identifier for this entry.
-    , dieParent       :: Maybe Word64        -- ^ Unique identifier of this entry's parent.
-    , dieChildren     :: [Word64]            -- ^ Unique identifiers of this entry's children.
-    , dieSiblingLeft  :: Maybe Word64        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
-    , dieSiblingRight :: Maybe Word64        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
-    , dieTag          :: DW_TAG              -- ^ Type tag.
-    , dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
-    , dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
-    } deriving (Show, Eq)
-
 -- | Utility function for retrieving the list of values for a specified attribute from a DWARF information entry.
 (!?) :: DIE -> DW_AT -> [DW_ATVAL]
-(!?) die at = map snd $ filter ((== at) . fst) $ dieAttributes die
+(!?) die at = map snd $ filter ((== at) . fst) $ _dieAttributes die
 
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
 getDieTree ::
@@ -346,55 +626,9 @@ getDieTree parent lsibling abbrev_map dr str_section cu_offset = do
           then getDieTree (Just offset) Nothing abbrev_map dr str_section cu_offset
           else pure []
         siblings  <- getDieTree parent (Just offset) abbrev_map dr str_section cu_offset
-        let children = map dieId $ filter (maybe False (== offset) . dieParent) descendants
-            rsibling = if null siblings then Nothing else Just $ dieId $ head siblings
+        let children = map _dieId $ filter (maybe False (== offset) . _dieParent) descendants
+            rsibling = if null siblings then Nothing else Just $ _dieId $ head siblings
         pure $ (DIE offset parent children lsibling rsibling tag (zip attrs values) dr : descendants) ++ siblings
-
--- TODO: Why not return CUs rather than DIE's?
--- Decode the compilation unit DWARF information entries.
-getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIE]
-getDieCus odr abbrev_section str_section =
-  fmap (concatMap (uncurry (:)) . addSiblings Lens._1) .
-  getWhileNotEmpty $ do
-    cu_offset       <- fromIntegral <$> Get.bytesRead
-    (desr, _)       <- getDwarfUnitLength odr
-    _version        <- desrGetW16 desr
-    abbrev_offset   <- desrGetDwarfOffset desr
-    addr_size       <- getWord8
-    dr              <- case addr_size of
-                        4 -> pure $ dwarfReader TargetSize32 desr
-                        8 -> pure $ dwarfReader TargetSize64 desr
-                        _ -> fail $ "Invalid address size: " ++ show addr_size
-    cu_die_offset   <- fromIntegral <$> Get.bytesRead
-    cu_abbr_num     <- getULEB128
-    let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
-        abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
-        cu_abbrev            = abbrev_map M.! cu_abbr_num
-        cu_tag               = abbrevTag cu_abbrev
-        cu_has_children      = abbrevChildren cu_abbrev
-        (cu_attrs, cu_forms) = unzip $ abbrevAttrForms cu_abbrev
-    cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
-    cu_descendants <-
-      if cu_has_children
-      then getDieTree (Just cu_die_offset) Nothing abbrev_map dr str_section cu_offset
-      else pure []
-           -- TODO: YUCK!
-    let cu_children = map dieId $ filter (maybe False (== cu_die_offset) . dieParent) cu_descendants
-    pure
-      ( DIE cu_die_offset Nothing cu_children Nothing Nothing cu_tag (zip cu_attrs cu_values) dr
-      , cu_descendants )
-
-addSiblings :: SimpleLensLike (Lens.Context DIE DIE) a DIE -> [a] -> [a]
-addSiblings lens = go Nothing
-  where
-    go _lSibling [] = []
-    go lSibling (x:xs) =
-      Lens.over (Lens.cloneLens lens) (modifyRecord lSibling (getId <$> listToMaybe xs)) x
-      : go (Just (getId x)) xs
-    getId = dieId . Lens.view (Lens.cloneLens lens)
-    modifyRecord l r x =
-      x { dieSiblingLeft = l
-        , dieSiblingRight = r }
 
 -- | Returns compilation unit id given the header offset into .debug_info
 infoCompileUnit  :: B.ByteString -- ^ Contents of .debug_info
@@ -405,17 +639,6 @@ infoCompileUnit infoSection offset =
         (L.fromChunks [B.drop (fromIntegral offset) infoSection]) of
     0xffffffff -> offset + 23
     _ -> offset + 11
-
--- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
-parseDwarfInfo :: Endianess
-               -> B.ByteString     -- ^ ByteString for the .debug_info section.
-               -> B.ByteString     -- ^ ByteString for the .debug_abbrev section.
-               -> B.ByteString     -- ^ ByteString for the .debug_str section.
-               -> M.Map Word64 DIE -- ^ A map from the unique ids to their corresponding DWARF information entries.
-parseDwarfInfo endianess info_section abbrev_section str_section =
-    let dr = dwarfEndianReader endianess
-        di = runGet (getDieCus dr abbrev_section str_section) $ L.fromChunks [info_section]
-    in M.fromList $ map (dieId &&& id) di
 
 -- Section 7.19 - Name Lookup Tables
 getNameLookupEntries :: DwarfReader -> Word64 -> Get [(String, [Word64])]
@@ -899,301 +1122,80 @@ data DW_TAG
     | DW_TAG_shared_type
     deriving (Show, Eq)
 
-getDW_TAG :: Get DW_TAG
-getDW_TAG = getULEB128 >>= dw_tag
-    where dw_tag 0x01 = pure DW_TAG_array_type
-          dw_tag 0x02 = pure DW_TAG_class_type
-          dw_tag 0x03 = pure DW_TAG_entry_point
-          dw_tag 0x04 = pure DW_TAG_enumeration_type
-          dw_tag 0x05 = pure DW_TAG_formal_parameter
-          dw_tag 0x08 = pure DW_TAG_imported_declaration
-          dw_tag 0x0a = pure DW_TAG_label
-          dw_tag 0x0b = pure DW_TAG_lexical_block
-          dw_tag 0x0d = pure DW_TAG_member
-          dw_tag 0x0f = pure DW_TAG_pointer_type
-          dw_tag 0x10 = pure DW_TAG_reference_type
-          dw_tag 0x11 = pure DW_TAG_compile_unit
-          dw_tag 0x12 = pure DW_TAG_string_type
-          dw_tag 0x13 = pure DW_TAG_structure_type
-          dw_tag 0x15 = pure DW_TAG_subroutine_type
-          dw_tag 0x16 = pure DW_TAG_typedef
-          dw_tag 0x17 = pure DW_TAG_union_type
-          dw_tag 0x18 = pure DW_TAG_unspecified_parameters
-          dw_tag 0x19 = pure DW_TAG_variant
-          dw_tag 0x1a = pure DW_TAG_common_block
-          dw_tag 0x1b = pure DW_TAG_common_inclusion
-          dw_tag 0x1c = pure DW_TAG_inheritance
-          dw_tag 0x1d = pure DW_TAG_inlined_subroutine
-          dw_tag 0x1e = pure DW_TAG_module
-          dw_tag 0x1f = pure DW_TAG_ptr_to_member_type
-          dw_tag 0x20 = pure DW_TAG_set_type
-          dw_tag 0x21 = pure DW_TAG_subrange_type
-          dw_tag 0x22 = pure DW_TAG_with_stmt
-          dw_tag 0x23 = pure DW_TAG_access_declaration
-          dw_tag 0x24 = pure DW_TAG_base_type
-          dw_tag 0x25 = pure DW_TAG_catch_block
-          dw_tag 0x26 = pure DW_TAG_const_type
-          dw_tag 0x27 = pure DW_TAG_constant
-          dw_tag 0x28 = pure DW_TAG_enumerator
-          dw_tag 0x29 = pure DW_TAG_file_type
-          dw_tag 0x2a = pure DW_TAG_friend
-          dw_tag 0x2b = pure DW_TAG_namelist
-          dw_tag 0x2c = pure DW_TAG_namelist_item
-          dw_tag 0x2d = pure DW_TAG_packed_type
-          dw_tag 0x2e = pure DW_TAG_subprogram
-          dw_tag 0x2f = pure DW_TAG_template_type_parameter
-          dw_tag 0x30 = pure DW_TAG_template_value_parameter
-          dw_tag 0x31 = pure DW_TAG_thrown_type
-          dw_tag 0x32 = pure DW_TAG_try_block
-          dw_tag 0x33 = pure DW_TAG_variant_part
-          dw_tag 0x34 = pure DW_TAG_variable
-          dw_tag 0x35 = pure DW_TAG_volatile_type
-          dw_tag 0x36 = pure DW_TAG_dwarf_procedure
-          dw_tag 0x37 = pure DW_TAG_restrict_type
-          dw_tag 0x38 = pure DW_TAG_interface_type
-          dw_tag 0x39 = pure DW_TAG_namespace
-          dw_tag 0x3a = pure DW_TAG_imported_module
-          dw_tag 0x3b = pure DW_TAG_unspecified_type
-          dw_tag 0x3c = pure DW_TAG_partial_unit
-          dw_tag 0x3d = pure DW_TAG_imported_unit
-          dw_tag 0x3f = pure DW_TAG_condition
-          dw_tag 0x40 = pure DW_TAG_shared_type
-          dw_tag n | 0x4080 <= n && n <= 0xffff = fail $ "User DW_TAG data requires extension of parser for code " ++ show n
-          dw_tag n = fail $ "Unrecognized DW_TAG " ++ show n
+-- TODO: Do we really want to maintain the siblings? We could go to
+-- parent->children? or even always keep the parens in context and not
+-- maintain that either?
 
-data DW_AT
-    = DW_AT_sibling              -- ^ reference
-    | DW_AT_location             -- ^ block, loclistptr
-    | DW_AT_name                 -- ^ string
-    | DW_AT_ordering             -- ^ constant
-    | DW_AT_byte_size            -- ^ block, constant, reference
-    | DW_AT_bit_offset           -- ^ block, constant, reference
-    | DW_AT_bit_size             -- ^ block, constant, reference
-    | DW_AT_stmt_list            -- ^ lineptr
-    | DW_AT_low_pc               -- ^ address
-    | DW_AT_high_pc              -- ^ address
-    | DW_AT_language             -- ^ constant
-    | DW_AT_discr                -- ^ reference
-    | DW_AT_discr_value          -- ^ constant
-    | DW_AT_visibility           -- ^ constant
-    | DW_AT_import               -- ^ reference
-    | DW_AT_string_length        -- ^ block, loclistptr
-    | DW_AT_common_reference     -- ^ reference
-    | DW_AT_comp_dir             -- ^ string
-    | DW_AT_const_value          -- ^ block, constant, string
-    | DW_AT_containing_type      -- ^ reference
-    | DW_AT_default_value        -- ^ reference
-    | DW_AT_inline               -- ^ constant
-    | DW_AT_is_optional          -- ^ flag
-    | DW_AT_lower_bound          -- ^ block, constant, reference
-    | DW_AT_producer             -- ^ string
-    | DW_AT_prototyped           -- ^ flag
-    | DW_AT_return_addr          -- ^ block, loclistptr
-    | DW_AT_start_scope          -- ^ constant
-    | DW_AT_bit_stride           -- ^ constant
-    | DW_AT_upper_bound          -- ^ block, constant, reference
-    | DW_AT_abstract_origin      -- ^ reference
-    | DW_AT_accessibility        -- ^ constant
-    | DW_AT_address_class        -- ^ constant
-    | DW_AT_artificial           -- ^ flag
-    | DW_AT_base_types           -- ^ reference
-    | DW_AT_calling_convention   -- ^ constant
-    | DW_AT_count                -- ^ block, constant, reference
-    | DW_AT_data_member_location -- ^ block, constant, loclistptr
-    | DW_AT_decl_column          -- ^ constant
-    | DW_AT_decl_file            -- ^ constant
-    | DW_AT_decl_line            -- ^ constant
-    | DW_AT_declaration          -- ^ flag
-    | DW_AT_discr_list           -- ^ block
-    | DW_AT_encoding             -- ^ constant
-    | DW_AT_external             -- ^ flag
-    | DW_AT_frame_base           -- ^ block, loclistptr
-    | DW_AT_friend               -- ^ reference
-    | DW_AT_identifier_case      -- ^ constant
-    | DW_AT_macro_info           -- ^ macptr
-    | DW_AT_namelist_item        -- ^ block
-    | DW_AT_priority             -- ^ reference
-    | DW_AT_segment              -- ^ block, loclistptr
-    | DW_AT_specification        -- ^ reference
-    | DW_AT_static_link          -- ^ block, loclistptr
-    | DW_AT_type                 -- ^ reference
-    | DW_AT_use_location         -- ^ block, loclistptr
-    | DW_AT_variable_parameter   -- ^ flag
-    | DW_AT_virtuality           -- ^ constant
-    | DW_AT_vtable_elem_location -- ^ block, loclistptr
-    | DW_AT_allocated            -- ^ block, constant, reference
-    | DW_AT_associated           -- ^ block, constant, reference
-    | DW_AT_data_location        -- ^ block
-    | DW_AT_byte_stride          -- ^ block, constant, reference
-    | DW_AT_entry_pc             -- ^ address
-    | DW_AT_use_UTF8             -- ^ flag
-    | DW_AT_extension            -- ^ reference
-    | DW_AT_ranges               -- ^ rangelistptr
-    | DW_AT_trampoline           -- ^ address, flag, reference, string
-    | DW_AT_call_column          -- ^ constant
-    | DW_AT_call_file            -- ^ constant
-    | DW_AT_call_line            -- ^ constant
-    | DW_AT_description          -- ^ string
-    | DW_AT_binary_scale         -- ^ constant
-    | DW_AT_decimal_scale        -- ^ constant
-    | DW_AT_small                -- ^ reference
-    | DW_AT_decimal_sign         -- ^ constant
-    | DW_AT_digit_count          -- ^ constant
-    | DW_AT_picture_string       -- ^ string
-    | DW_AT_mutable              -- ^ flag
-    | DW_AT_threads_scaled       -- ^ flag
-    | DW_AT_explicit             -- ^ flag
-    | DW_AT_object_pointer       -- ^ reference
-    | DW_AT_endianity            -- ^ constant
-    | DW_AT_elemental            -- ^ flag
-    | DW_AT_return                 -- ^ flag
-    | DW_AT_recursive            -- ^ flag
-    | DW_AT_user Word64          -- ^ user extension
-    deriving (Show, Eq)
-dw_at :: Word64 -> DW_AT
-dw_at 0x01 = DW_AT_sibling
-dw_at 0x02 = DW_AT_location
-dw_at 0x03 = DW_AT_name
-dw_at 0x09 = DW_AT_ordering
-dw_at 0x0b = DW_AT_byte_size
-dw_at 0x0c = DW_AT_bit_offset
-dw_at 0x0d = DW_AT_bit_size
-dw_at 0x10 = DW_AT_stmt_list
-dw_at 0x11 = DW_AT_low_pc
-dw_at 0x12 = DW_AT_high_pc
-dw_at 0x13 = DW_AT_language
-dw_at 0x15 = DW_AT_discr
-dw_at 0x16 = DW_AT_discr_value
-dw_at 0x17 = DW_AT_visibility
-dw_at 0x18 = DW_AT_import
-dw_at 0x19 = DW_AT_string_length
-dw_at 0x1a = DW_AT_common_reference
-dw_at 0x1b = DW_AT_comp_dir
-dw_at 0x1c = DW_AT_const_value
-dw_at 0x1d = DW_AT_containing_type
-dw_at 0x1e = DW_AT_default_value
-dw_at 0x20 = DW_AT_inline
-dw_at 0x21 = DW_AT_is_optional
-dw_at 0x22 = DW_AT_lower_bound
-dw_at 0x25 = DW_AT_producer
-dw_at 0x27 = DW_AT_prototyped
-dw_at 0x2a = DW_AT_return_addr
-dw_at 0x2c = DW_AT_start_scope
-dw_at 0x2e = DW_AT_bit_stride
-dw_at 0x2f = DW_AT_upper_bound
-dw_at 0x31 = DW_AT_abstract_origin
-dw_at 0x32 = DW_AT_accessibility
-dw_at 0x33 = DW_AT_address_class
-dw_at 0x34 = DW_AT_artificial
-dw_at 0x35 = DW_AT_base_types
-dw_at 0x36 = DW_AT_calling_convention
-dw_at 0x37 = DW_AT_count
-dw_at 0x38 = DW_AT_data_member_location
-dw_at 0x39 = DW_AT_decl_column
-dw_at 0x3a = DW_AT_decl_file
-dw_at 0x3b = DW_AT_decl_line
-dw_at 0x3c = DW_AT_declaration
-dw_at 0x3d = DW_AT_discr_list
-dw_at 0x3e = DW_AT_encoding
-dw_at 0x3f = DW_AT_external
-dw_at 0x40 = DW_AT_frame_base
-dw_at 0x41 = DW_AT_friend
-dw_at 0x42 = DW_AT_identifier_case
-dw_at 0x43 = DW_AT_macro_info
-dw_at 0x44 = DW_AT_namelist_item
-dw_at 0x45 = DW_AT_priority
-dw_at 0x46 = DW_AT_segment
-dw_at 0x47 = DW_AT_specification
-dw_at 0x48 = DW_AT_static_link
-dw_at 0x49 = DW_AT_type
-dw_at 0x4a = DW_AT_use_location
-dw_at 0x4b = DW_AT_variable_parameter
-dw_at 0x4c = DW_AT_virtuality
-dw_at 0x4d = DW_AT_vtable_elem_location
-dw_at 0x4e = DW_AT_allocated
-dw_at 0x4f = DW_AT_associated
-dw_at 0x50 = DW_AT_data_location
-dw_at 0x51 = DW_AT_byte_stride
-dw_at 0x52 = DW_AT_entry_pc
-dw_at 0x53 = DW_AT_use_UTF8
-dw_at 0x54 = DW_AT_extension
-dw_at 0x55 = DW_AT_ranges
-dw_at 0x56 = DW_AT_trampoline
-dw_at 0x57 = DW_AT_call_column
-dw_at 0x58 = DW_AT_call_file
-dw_at 0x59 = DW_AT_call_line
-dw_at 0x5a = DW_AT_description
-dw_at 0x5b = DW_AT_binary_scale
-dw_at 0x5c = DW_AT_decimal_scale
-dw_at 0x5d = DW_AT_small
-dw_at 0x5e = DW_AT_decimal_sign
-dw_at 0x5f = DW_AT_digit_count
-dw_at 0x60 = DW_AT_picture_string
-dw_at 0x61 = DW_AT_mutable
-dw_at 0x62 = DW_AT_threads_scaled
-dw_at 0x63 = DW_AT_explicit
-dw_at 0x64 = DW_AT_object_pointer
-dw_at 0x65 = DW_AT_endianity
-dw_at 0x66 = DW_AT_elemental
-dw_at 0x67 = DW_AT_return
-dw_at 0x68 = DW_AT_recursive
-dw_at n | 0x2000 <= n && n <= 0x3fff = DW_AT_user n
-dw_at n = error $ "Unrecognized DW_AT " ++ show n
+-- | The dwarf information entries form a graph of nodes tagged with attributes. Please refer to the DWARF specification
+-- for semantics. Although it looks like a tree, there can be attributes which have adjacency information which will
+-- introduce cross-branch edges.
+data DIE = DIE
+    { _dieId           :: Word64              -- ^ Unique identifier for this entry.
+    , _dieParent       :: Maybe Word64        -- ^ Unique identifier of this entry's parent.
+    , _dieChildren     :: [Word64]            -- ^ Unique identifiers of this entry's children.
+    , _dieSiblingLeft  :: Maybe Word64        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
+    , _dieSiblingRight :: Maybe Word64        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
+    , _dieTag          :: DW_TAG              -- ^ Type tag.
+    , _dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
+    , _dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
+    } deriving (Show, Eq)
+makeLenses ''DIE
 
-data DW_ATVAL
-    = DW_ATVAL_INT    Int64
-    | DW_ATVAL_UINT   Word64
-    | DW_ATVAL_STRING String
-    | DW_ATVAL_BLOB   B.ByteString
-    | DW_ATVAL_BOOL   Bool
-    deriving (Show, Eq)
+addSiblings :: SimpleLensLike (Lens.Context DIE DIE) a DIE -> [a] -> [a]
+addSiblings lens = go Nothing
+  where
+    go _lSibling [] = []
+    go lSibling (x:xs) =
+      Lens.over (Lens.cloneLens lens)
+      (Lens.set dieSiblingLeft lSibling .
+       Lens.set dieSiblingRight (getId <$> listToMaybe xs)) x
+      : go (Just (getId x)) xs
+    getId = _dieId . Lens.view (Lens.cloneLens lens)
 
-data DW_FORM
-    = DW_FORM_addr              -- ^ address
-    | DW_FORM_block2 -- ^ block
-    | DW_FORM_block4 -- ^ block
-    | DW_FORM_data2 -- ^ constant
-    | DW_FORM_data4 -- ^ constant, lineptr, loclistptr, macptr, rangelistptr
-    | DW_FORM_data8 -- ^ constant, lineptr, loclistptr, macptr, rangelistptr
-    | DW_FORM_string -- ^ string
-    | DW_FORM_block -- ^ block
-    | DW_FORM_block1 -- ^ block
-    | DW_FORM_data1 -- ^ constant
-    | DW_FORM_flag -- ^ flag
-    | DW_FORM_sdata -- ^ constant
-    | DW_FORM_strp -- ^ string
-    | DW_FORM_udata -- ^ constant
-    | DW_FORM_ref_addr            -- ^ reference
-    | DW_FORM_ref1                -- ^ reference
-    | DW_FORM_ref2                -- ^ reference
-    | DW_FORM_ref4                -- ^ reference
-    | DW_FORM_ref8                -- ^ reference
-    | DW_FORM_ref_udata           -- ^ reference
-    | DW_FORM_indirect            -- ^ (see Section 7.5.3 of DWARF3 specification)
-    deriving (Show, Eq)
-dw_form :: Word64 -> DW_FORM
-dw_form 0x01 = DW_FORM_addr
-dw_form 0x03 = DW_FORM_block2
-dw_form 0x04 = DW_FORM_block4
-dw_form 0x05 = DW_FORM_data2
-dw_form 0x06 = DW_FORM_data4
-dw_form 0x07 = DW_FORM_data8
-dw_form 0x08 = DW_FORM_string
-dw_form 0x09 = DW_FORM_block
-dw_form 0x0a = DW_FORM_block1
-dw_form 0x0b = DW_FORM_data1
-dw_form 0x0c = DW_FORM_flag
-dw_form 0x0d = DW_FORM_sdata
-dw_form 0x0e = DW_FORM_strp
-dw_form 0x0f = DW_FORM_udata
-dw_form 0x10 = DW_FORM_ref_addr
-dw_form 0x11 = DW_FORM_ref1
-dw_form 0x12 = DW_FORM_ref2
-dw_form 0x13 = DW_FORM_ref4
-dw_form 0x14 = DW_FORM_ref8
-dw_form 0x15 = DW_FORM_ref_udata
-dw_form 0x16 = DW_FORM_indirect
-dw_form n    = error $ "Unrecognized DW_FORM " ++ show n
+-- TODO: Why not return CUs rather than DIE's?
+-- Decode the compilation unit DWARF information entries.
+getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIE]
+getDieCus odr abbrev_section str_section =
+  fmap (concatMap (uncurry (:)) . addSiblings Lens._1) .
+  getWhileNotEmpty $ do
+    cu_offset       <- fromIntegral <$> Get.bytesRead
+    (desr, _)       <- getDwarfUnitLength odr
+    _version        <- desrGetW16 desr
+    abbrev_offset   <- desrGetDwarfOffset desr
+    addr_size       <- getWord8
+    dr              <- case addr_size of
+                        4 -> pure $ dwarfReader TargetSize32 desr
+                        8 -> pure $ dwarfReader TargetSize64 desr
+                        _ -> fail $ "Invalid address size: " ++ show addr_size
+    cu_die_offset   <- fromIntegral <$> Get.bytesRead
+    cu_abbr_num     <- getULEB128
+    let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
+        abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
+        cu_abbrev            = abbrev_map M.! cu_abbr_num
+        cu_tag               = abbrevTag cu_abbrev
+        cu_has_children      = abbrevChildren cu_abbrev
+        (cu_attrs, cu_forms) = unzip $ abbrevAttrForms cu_abbrev
+    cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
+    cu_descendants <-
+      if cu_has_children
+      then getDieTree (Just cu_die_offset) Nothing abbrev_map dr str_section cu_offset
+      else pure []
+           -- TODO: YUCK!
+    let cu_children = map _dieId $ filter (maybe False (== cu_die_offset) . _dieParent) cu_descendants
+    pure
+      ( DIE cu_die_offset Nothing cu_children Nothing Nothing cu_tag (zip cu_attrs cu_values) dr
+      , cu_descendants )
+
+-- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
+parseDwarfInfo :: Endianess
+               -> B.ByteString     -- ^ ByteString for the .debug_info section.
+               -> B.ByteString     -- ^ ByteString for the .debug_abbrev section.
+               -> B.ByteString     -- ^ ByteString for the .debug_str section.
+               -> M.Map Word64 DIE -- ^ A map from the unique ids to their corresponding DWARF information entries.
+parseDwarfInfo endianess info_section abbrev_section str_section =
+    let dr = dwarfEndianReader endianess
+        di = runGet (getDieCus dr abbrev_section str_section) $ L.fromChunks [info_section]
+    in M.fromList $ map (_dieId &&& id) di
 
 data DW_OP
     = DW_OP_addr Word64
