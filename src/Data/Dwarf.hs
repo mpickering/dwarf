@@ -305,16 +305,20 @@ data DW_ATVAL
     | DW_ATVAL_BOOL   Bool
     deriving (Show, Eq)
 
+getByteStringLen :: Integral a => Get a -> Get B.ByteString
+getByteStringLen lenGetter =
+  getByteString =<< fromIntegral <$> lenGetter
+
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 getForm :: DwarfReader -> B.ByteString -> Word64 -> DW_FORM -> Get DW_ATVAL
 getForm dr str cu form = case form of
   DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetDwarfTargetAddress dr
-  DW_FORM_block1    -> DW_ATVAL_BLOB <$> (fromIntegral <$> getWord8        >>= getByteString)
-  DW_FORM_block2    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetW16 dr  >>= getByteString)
-  DW_FORM_block4    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetW32 dr  >>= getByteString)
-  DW_FORM_block     -> DW_ATVAL_BLOB <$> (fromIntegral <$> getULEB128      >>= getByteString)
+  DW_FORM_block1    -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
+  DW_FORM_block2    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW16 dr)
+  DW_FORM_block4    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW32 dr)
+  DW_FORM_block     -> DW_ATVAL_BLOB <$> getByteStringLen getULEB128
   DW_FORM_data1     -> DW_ATVAL_UINT . fromIntegral <$> getWord8
   DW_FORM_data2     -> DW_ATVAL_UINT . fromIntegral <$> drGetW16 dr
   DW_FORM_data4     -> DW_ATVAL_UINT . fromIntegral <$> drGetW32 dr
@@ -323,16 +327,17 @@ getForm dr str cu form = case form of
   DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
   DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
   DW_FORM_string    -> DW_ATVAL_STRING <$> getNullTerminatedString
-  DW_FORM_ref1      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> getWord8
-  DW_FORM_ref2      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> drGetW16 dr
-  DW_FORM_ref4      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> drGetW32 dr
-  DW_FORM_ref8      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> drGetW64 dr
-  DW_FORM_ref_udata -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> getULEB128
+  DW_FORM_ref1      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> getWord8
+  DW_FORM_ref2      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW16 dr
+  DW_FORM_ref4      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW32 dr
+  DW_FORM_ref8      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW64 dr
+  DW_FORM_ref_udata -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> getULEB128
   DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetDwarfOffset dr
   DW_FORM_indirect  -> getForm dr str cu . dw_form =<< getULEB128
   DW_FORM_strp      -> do
     offset <- fromIntegral <$> drGetDwarfOffset dr
-    pure $ DW_ATVAL_STRING $ runGet getNullTerminatedString (L.fromChunks [B.drop offset str])
+    pure . DW_ATVAL_STRING .
+      runGet getNullTerminatedString $ L.fromChunks [B.drop offset str]
 
 data DW_AT
     = DW_AT_sibling              -- ^ reference
@@ -720,7 +725,7 @@ data DW_LNI
 getDW_LNI :: DwarfReader -> Int64 -> Word8 -> Word8 -> Word64 -> Get DW_LNI
 getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromIntegral <$> getWord8 >>= getDW_LNI_
     where getDW_LNI_ 0x00 = do
-            rest <- getByteString =<< fromIntegral <$> getULEB128
+            rest <- getByteStringLen getULEB128
             pure $ runGet getDW_LNE $ L.fromChunks [rest]
                 where getDW_LNE = getWord8 >>= getDW_LNE_
                       getDW_LNE_ 0x01 = pure DW_LNE_end_sequence
@@ -951,14 +956,14 @@ getDW_CFA dr = do
             0x0c -> pure DW_CFA_def_cfa <*> getULEB128 <*> getULEB128
             0x0d -> pure DW_CFA_def_cfa_register <*> getULEB128
             0x0e -> pure DW_CFA_def_cfa_offset <*> getULEB128
-            0x0f -> pure DW_CFA_def_cfa_expression <*> (fromIntegral <$> getULEB128 >>= getByteString)
-            0x10 -> pure DW_CFA_expression <*> getULEB128 <*> (fromIntegral <$> getULEB128 >>= getByteString)
+            0x0f -> pure DW_CFA_def_cfa_expression <*> getByteStringLen getULEB128
+            0x10 -> pure DW_CFA_expression <*> getULEB128 <*> getByteStringLen getULEB128
             0x11 -> pure DW_CFA_offset_extended_sf <*> getULEB128 <*> getSLEB128
             0x12 -> pure DW_CFA_def_cfa_sf <*> getULEB128 <*> getSLEB128
             0x13 -> pure DW_CFA_def_cfa_offset_sf <*> getSLEB128
             0x14 -> pure DW_CFA_val_offset <*> getULEB128 <*> getULEB128
             0x15 -> pure DW_CFA_val_offset_sf <*> getULEB128 <*> getSLEB128
-            0x16 -> pure DW_CFA_val_expression <*> getULEB128 <*> (fromIntegral <$> getULEB128 >>= getByteString)
+            0x16 -> pure DW_CFA_val_expression <*> getULEB128 <*> getByteStringLen getULEB128
             _ -> fail $ "Invalid tag: " ++ show tag
         _ -> fail $ "Invalid tag: " ++ show tag
 
@@ -1048,8 +1053,7 @@ getDwarfLoc dr = do
      else if begin == drLargestTargetAddress dr then
         pure (Left end :) <*> getDwarfLoc dr
       else do
-        len  <- fromIntegral <$> drGetW16 dr
-        expr <- getByteString len
+        expr <- getByteStringLen (drGetW16 dr)
         pure (Right (begin, end, expr) :) <*> getDwarfLoc dr
 
 data DW_TAG
