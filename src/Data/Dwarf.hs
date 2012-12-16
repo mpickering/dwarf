@@ -579,31 +579,6 @@ getAbbrevList =
 (!?) :: DIE -> DW_AT -> [DW_ATVAL]
 (!?) die at = map snd $ filter ((== at) . fst) $ _dieAttributes die
 
--- Decode a non-compilation unit DWARF information entry, its children and its siblings.
-getDieTree ::
-  Maybe Word64 -> Maybe Word64 ->
-  M.Map Word64 DW_ABBREV -> DwarfReader ->
-  B.ByteString -> Word64 -> Get [DIE]
-getDieTree parent lsibling abbrev_map dr str_section cu_offset = do
-    offset <- fromIntegral <$> Get.bytesRead
-    abbrid <- getULEB128
-    if abbrid == 0 then
-        pure []
-     else do
-        let abbrev         = abbrev_map M.! abbrid
-            tag            = abbrevTag abbrev
-            has_children   = abbrevChildren abbrev
-            (attrs, forms) = unzip $ abbrevAttrForms abbrev
-        values    <- mapM (getForm dr str_section cu_offset) forms
-        descendants <-
-          if has_children
-          then getDieTree (Just offset) Nothing abbrev_map dr str_section cu_offset
-          else pure []
-        siblings  <- getDieTree parent (Just offset) abbrev_map dr str_section cu_offset
-        let children = map _dieId $ filter (maybe False (== offset) . _dieParent) descendants
-            rsibling = if null siblings then Nothing else Just $ _dieId $ head siblings
-        pure $ (DIE offset parent children lsibling rsibling tag (zip attrs values) dr : descendants) ++ siblings
-
 -- | Returns compilation unit id given the header offset into .debug_info
 infoCompileUnit  :: B.ByteString -- ^ Contents of .debug_info
                  -> Word64 -- ^ Offset into .debug_info header
@@ -1117,11 +1092,46 @@ addSiblings lens = go Nothing
       : go (Just (getId x)) xs
     getId = _dieId . Lens.view (Lens.cloneLens lens)
 
+concatSiblings :: [(DIE, [DIE])] -> [DIE]
+concatSiblings = concatMap (uncurry (:)) . addSiblings Lens._1
+
+-- Decode a non-compilation unit DWARF information entry, its children and its siblings.
+getDieAndSiblings ::
+  Word64 -> M.Map Word64 DW_ABBREV -> DwarfReader ->
+  B.ByteString -> Word64 -> Get [DIE]
+getDieAndSiblings parent abbrev_map dr str_section cu_offset =
+  concatSiblings <$> go
+  where
+    go = do
+      offset <- fromIntegral <$> Get.bytesRead
+      abbrid <- getULEB128
+      if abbrid == 0
+        then pure []
+        else do
+          dieDescendants <- getDIEAndDescendants offset (abbrev_map M.! abbrid) parent abbrev_map dr str_section cu_offset
+          siblings <- go
+          pure $ dieDescendants : siblings
+
+getDIEAndDescendants :: Word64 -> DW_ABBREV -> Word64 -> M.Map Word64 DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [DIE])
+getDIEAndDescendants offset abbrev parent abbrev_map dr str_section cu_offset = do
+  values    <- mapM (getForm dr str_section cu_offset) forms
+  descendants <-
+    if abbrevChildren abbrev
+    then getDieAndSiblings offset abbrev_map dr str_section cu_offset
+    else pure []
+  -- TODO: YUCK!
+  let children = map _dieId $ filter (maybe False (== offset) . _dieParent) descendants
+  pure $
+    (DIE offset (Just parent) children Nothing Nothing tag (zip attrs values) dr, descendants)
+  where
+    tag            = abbrevTag abbrev
+    (attrs, forms) = unzip $ abbrevAttrForms abbrev
+
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
 getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIE]
 getDieCus odr abbrev_section str_section =
-  fmap (concatMap (uncurry (:)) . addSiblings Lens._1) .
+  fmap concatSiblings .
   getWhileNotEmpty $ do
     cu_offset       <- fromIntegral <$> Get.bytesRead
     (desr, _)       <- getDwarfUnitLength odr
@@ -1143,9 +1153,9 @@ getDieCus odr abbrev_section str_section =
     cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
     cu_descendants <-
       if cu_has_children
-      then getDieTree (Just cu_die_offset) Nothing abbrev_map dr str_section cu_offset
+      then getDieAndSiblings cu_die_offset abbrev_map dr str_section cu_offset
       else pure []
-           -- TODO: YUCK!
+    -- TODO: YUCK!
     let cu_children = map _dieId $ filter (maybe False (== cu_die_offset) . _dieParent) cu_descendants
     pure
       ( DIE cu_die_offset Nothing cu_children Nothing Nothing cu_tag (zip cu_attrs cu_values) dr
