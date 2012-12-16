@@ -625,12 +625,17 @@ getNameLookupEntries dr cu_offset = do
         rest <- getNameLookupEntries dr cu_offset
         pure $ (name, [cu_offset + die_offset]) : rest
 
-getNameLookupTable :: TargetSize -> DwarfEndianReader -> Get [M.Map String [Word64]]
-getNameLookupTable target64 odr = getWhileNotEmpty $ do
+getDebugInfoOffset :: TargetSize -> DwarfEndianReader -> Get (DwarfReader, Word64)
+getDebugInfoOffset target64 odr = do
   (der, _)          <- getDwarfUnitLength odr
   let dr            = dwarfReader target64 der
   _version          <- drGetW16 dr
   debug_info_offset <- drGetDwarfOffset dr
+  return (dr, debug_info_offset)
+
+getNameLookupTable :: TargetSize -> DwarfEndianReader -> Get [M.Map String [Word64]]
+getNameLookupTable target64 odr = getWhileNotEmpty $ do
+  (dr, debug_info_offset) <- getDebugInfoOffset target64 odr
   _debug_info_length <- drGetDwarfOffset dr
   pubNames          <- M.fromListWith (++) <$> getNameLookupEntries dr debug_info_offset
   pure pubNames
@@ -650,10 +655,7 @@ parseDwarfPubtypes endianess target64 pubtypes_section =
 -- Section 7.20 - Address Range Table
 getAddressRangeTable :: TargetSize -> DwarfEndianReader -> Get [([(Word64, Word64)], Word64)]
 getAddressRangeTable target64 odr = getWhileNotEmpty $ do
-  (der, _)          <- getDwarfUnitLength odr
-  let dr            = dwarfReader target64 der
-  _version          <- drGetW16 dr
-  debug_info_offset <- drGetDwarfOffset dr
+  (dr, debug_info_offset) <- getDebugInfoOffset target64 odr
   address_size      <- fromIntegral <$> getWord8
   _segment_size     <- getWord8
   bytes_read        <- Get.bytesRead
