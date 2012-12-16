@@ -675,25 +675,20 @@ parseDwarfPubtypes endianess target64 pubtypes_section =
 
 -- Section 7.20 - Address Range Table
 getAddressRangeTable :: TargetSize -> DwarfEndianReader -> Get [([(Word64, Word64)], Word64)]
-getAddressRangeTable target64 odr = do
-    empty <- Get.isEmpty
-    if empty then
-        pure []
-     else do
-        (der, _)          <- getDwarfUnitLength odr
-        let dr            = dwarfReader target64 der
-        _version          <- drGetW16 dr
-        debug_info_offset <- drGetDwarfOffset dr
-        address_size      <- fromIntegral <$> getWord8
-        _segment_size     <- getWord8
-        bytes_read        <- Get.bytesRead
-        Get.skip $ fromIntegral (2 * address_size - (bytes_read `mod` (2 * address_size)))
-        address_ranges    <- case address_size of
-                            4 -> whileM (/= (0, 0)) $ (,) <$> (fromIntegral <$> drGetW32 dr) <*> (fromIntegral <$> drGetW32 dr)
-                            8 -> whileM (/= (0, 0)) $ (,) <$> drGetW64 dr <*> drGetW64 dr
-                            n -> fail $ "Unrecognized address size " ++ show n ++ " in .debug_aranges section."
-        rest              <- getAddressRangeTable target64 odr
-        pure $ (address_ranges, debug_info_offset) : rest
+getAddressRangeTable target64 odr = getWhileNotEmpty $ do
+  (der, _)          <- getDwarfUnitLength odr
+  let dr            = dwarfReader target64 der
+  _version          <- drGetW16 dr
+  debug_info_offset <- drGetDwarfOffset dr
+  address_size      <- fromIntegral <$> getWord8
+  _segment_size     <- getWord8
+  bytes_read        <- Get.bytesRead
+  Get.skip $ fromIntegral (2 * address_size - (bytes_read `mod` (2 * address_size)))
+  address_ranges    <- case address_size of
+                      4 -> whileM (/= (0, 0)) $ (,) <$> (fromIntegral <$> drGetW32 dr) <*> (fromIntegral <$> drGetW32 dr)
+                      8 -> whileM (/= (0, 0)) $ (,) <$> drGetW64 dr <*> drGetW64 dr
+                      n -> fail $ "Unrecognized address size " ++ show n ++ " in .debug_aranges section."
+  pure (address_ranges, debug_info_offset)
 
 -- | Parses  the .debug_aranges section (as ByteString) into a map from an address range to a debug info id that indexes the DwarfInfo.
 parseDwarfAranges :: Endianess -> TargetSize -> B.ByteString -> [([(Word64, Word64)], Word64)]
