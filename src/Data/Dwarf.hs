@@ -652,19 +652,14 @@ getNameLookupEntries dr cu_offset = do
         pure $ (name, [cu_offset + die_offset]) : rest
 
 getNameLookupTable :: TargetSize -> DwarfEndianReader -> Get [M.Map String [Word64]]
-getNameLookupTable target64 odr = do
-    empty <- Get.isEmpty
-    if empty then
-        pure []
-     else do
-        (der, _)          <- getDwarfUnitLength odr
-        let dr            = dwarfReader target64 der
-        _version          <- drGetW16 dr
-        debug_info_offset <- drGetDwarfOffset dr
-        _debug_info_length <- drGetDwarfOffset dr
-        pubNames          <- M.fromListWith (++) <$> getNameLookupEntries dr debug_info_offset
-        rest              <- getNameLookupTable target64 odr
-        pure $ pubNames : rest
+getNameLookupTable target64 odr = getWhileNotEmpty $ do
+  (der, _)          <- getDwarfUnitLength odr
+  let dr            = dwarfReader target64 der
+  _version          <- drGetW16 dr
+  debug_info_offset <- drGetDwarfOffset dr
+  _debug_info_length <- drGetDwarfOffset dr
+  pubNames          <- M.fromListWith (++) <$> getNameLookupEntries dr debug_info_offset
+  pure pubNames
 
 -- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a debug info id in the DwarfInfo.
 parseDwarfPubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [Word64]
