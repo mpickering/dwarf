@@ -47,20 +47,20 @@ module Data.Dwarf ( parseDwarfInfo
                   , DW_DSC(..)
                   ) where
 
-import Data.Int
-import Data.Bits
-import Data.Word
-import Data.Dynamic
-import Data.Binary
-import Data.Binary.Get
-import Data.Maybe
-import Data.Char
-import Control.Monad
-import Control.Applicative
-import qualified Data.Map as M
+import Control.Applicative (Applicative(..), (<$>))
+import Control.Arrow ((***))
+import Control.Monad (replicateM)
+import Data.Binary (Binary(..), getWord8)
+import Data.Binary.Get (getByteString, getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get, runGet)
+import Data.Bits (Bits(..))
+import Data.Char (chr)
+import Data.Int (Int8, Int16, Int32, Int64)
+import Data.Word (Word8, Word16, Word32, Word64)
+import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as L
+import qualified Data.Map as M
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Utility functions.
@@ -71,69 +71,69 @@ getWhile :: (a -> Bool) -> Get a -> Get [a]
 getWhile cond get = do
     el <- get
     if cond el then
-        liftM (el :) $ getWhile cond get
+        (el :) <$> getWhile cond get
      else
-        return []
+        pure []
 
 -- Decode a NULL-terminated UTF-8 string.
 getNullTerminatedString :: Get String
-getNullTerminatedString2 = liftM (C.unpack . B.pack) (getWhile (/= 0) getWord8)
-getNullTerminatedString = liftM (map (chr . fromIntegral)) $ getWhile (/= 0) getCharUTF8
+getNullTerminatedString2 = C.unpack . B.pack <$> getWhile (/= 0) getWord8
+getNullTerminatedString = map (chr . fromIntegral) <$> getWhile (/= 0) getCharUTF8
     where getCharUTF8 = do
             let getCharUTF82 b1 = do
-                    b2 <- liftM fromIntegral getWord8 :: Get Word32
+                    b2 <- fromIntegral <$> getWord8 :: Get Word32
                     if b2 .&. 0xc0 == 0x80 then
-                            return $ ((b1 .&. 0x1f) `shiftL` 6) .|. (b2 .&. 0x3f)
+                            pure $ ((b1 .&. 0x1f) `shiftL` 6) .|. (b2 .&. 0x3f)
                          else
                             fail "Invalid second byte in UTf8 string."
                 getCharUTF83 b1 = do
-                    b2 <- liftM fromIntegral getWord8 :: Get Word32
-                    b3 <- liftM fromIntegral getWord8 :: Get Word32
+                    b2 <- fromIntegral <$> getWord8 :: Get Word32
+                    b3 <- fromIntegral <$> getWord8 :: Get Word32
                     if b2 .&. 0xc0 == 0x80 && b3 .&. 0xc0 == 0x80 then
-                            return $ ((b1 .&. 0x0f) `shiftL` 12) .|. ((b2 .&. 0x3f) `shiftL` 6) .|. (b3 .&. 0x3f)
+                            pure $ ((b1 .&. 0x0f) `shiftL` 12) .|. ((b2 .&. 0x3f) `shiftL` 6) .|. (b3 .&. 0x3f)
                          else
                             fail "Invalid second or third byte in UTf8 string."
                 getCharUTF84 b1 = do
-                    b2 <- liftM fromIntegral getWord8 :: Get Word32
-                    b3 <- liftM fromIntegral getWord8 :: Get Word32
-                    b4 <- liftM fromIntegral getWord8 :: Get Word32
+                    b2 <- fromIntegral <$> getWord8 :: Get Word32
+                    b3 <- fromIntegral <$> getWord8 :: Get Word32
+                    b4 <- fromIntegral <$> getWord8 :: Get Word32
                     if b2 .&. 0xc0 == 0x80 && b3 .&. 0xc0 == 0x80 && b4 .&. 0xc0 == 0x80 then
-                            return $ ((b1 .&. 0x07) `shiftL` 18) .|. ((b2 .&. 0x3f) `shiftL` 12) .|. ((b3 .&. 0x3f) `shiftL` 6) .|. (b4 .&. 0x3f)
+                            pure $ ((b1 .&. 0x07) `shiftL` 18) .|. ((b2 .&. 0x3f) `shiftL` 12) .|. ((b3 .&. 0x3f) `shiftL` 6) .|. (b4 .&. 0x3f)
                          else
                             fail "Invalid second or third byte in UTf8 string."
-            b1 <- liftM fromIntegral getWord8 :: Get Word32
+            b1 <- fromIntegral <$> getWord8 :: Get Word32
             case b1 of
-                n | n .&. 0x80 == 0x00 -> return $ fromIntegral n
+                n | n .&. 0x80 == 0x00 -> pure $ fromIntegral n
                 n | n .&. 0xe0 == 0xc0 -> getCharUTF82 n
                 n | n .&. 0xf0 == 0xe0 -> getCharUTF83 n
                 n | n .&. 0xf8 == 0xf0 -> getCharUTF84 n
                 _                      -> fail "Invalid first byte in UTF8 string."
- 
+
 -- Decode a signed little-endian base 128 encoded integer.
 getSLEB128 :: Get Int64
 getSLEB128 =
     let go acc shift = do
-        byte <- liftM fromIntegral getWord8 :: Get Word64
-        temp <- return $ acc .|. (clearBit byte 7 `shiftL` shift)
+        byte <- fromIntegral <$> getWord8 :: Get Word64
+        let temp = acc .|. (clearBit byte 7 `shiftL` shift)
         if testBit byte 7 then
             go temp (shift + 7)
          else
             if shift < 32  && testBit byte 6 then
-                return $ fromIntegral $ temp .|. ((-1) `shiftL` shift)
+                pure $ fromIntegral $ temp .|. ((-1) `shiftL` shift)
              else
-                return $ fromIntegral temp
+                pure $ fromIntegral temp
     in go 0 0
 
 -- Decode an unsigned little-endian base 128 encoded integer.
 getULEB128 :: Get Word64
 getULEB128 =
     let go acc shift = do
-        byte <- liftM fromIntegral getWord8 :: Get Word64
-        temp <- return $ acc .|. (clearBit byte 7 `shiftL` shift)
+        byte <- fromIntegral <$> getWord8 :: Get Word64
+        let temp = acc .|. (clearBit byte 7 `shiftL` shift)
         if testBit byte 7 then
             go temp (shift + 7)
          else
-            return temp
+            pure temp
     in go 0 0
 
 -- Decode the DWARF size header entry, which specifies both the size of a DWARF subsection and whether this section uses DWARF32 or DWARF64.
@@ -142,11 +142,11 @@ getDwarfUnitLength dr@(DwarfEndianReader e w16 w32 w64) = do
     size <- w32
     if size == 0xffffffff then do
         size <- w64
-        return (dwarfEndianSizeReader True dr, size)
+        pure (dwarfEndianSizeReader True dr, size)
      else if size >= 0xffffff00 then
         fail ("Invalid DWARF size " ++ show size)
       else
-        return (dwarfEndianSizeReader False dr, fromIntegral $ size)
+        pure (dwarfEndianSizeReader False dr, fromIntegral size)
 
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -160,7 +160,7 @@ dwarfEndianReader False = DwarfEndianReader False getWord16be getWord32be getWor
 -- Intermediate data structure for a partial DwarfReader.
 data DwarfEndianSizeReader = DwarfEndianSizeReader Bool (Get Word16) (Get Word32) (Get Word64) Bool Word64 (Get Word64)
 dwarfEndianSizeReader True  (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 True  0xffffffffffffffff w64
-dwarfEndianSizeReader False (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 False 0xffffffff (liftM fromIntegral w32)
+dwarfEndianSizeReader False (DwarfEndianReader e w16 w32 w64) = DwarfEndianSizeReader e w16 w32 w64 False 0xffffffff (fromIntegral <$> w32)
 
 -- | Type containing functions and data needed for decoding DWARF information.
 data DwarfReader = DwarfReader
@@ -176,39 +176,39 @@ data DwarfReader = DwarfReader
     , getDwarfTargetAddress :: Get Word64 -- ^ Action for reading a pointer for the target machine.
     }
 instance Show DwarfReader where
-    show dr = "DwarfReader " ++ show (littleEndian dr) ++ " " ++ show (dwarf64 dr) ++ " " ++ show (target64 dr) 
+    show dr = "DwarfReader " ++ show (littleEndian dr) ++ " " ++ show (dwarf64 dr) ++ " " ++ show (target64 dr)
 instance Eq DwarfReader where
     a1 == a2 = (littleEndian a1 == littleEndian a2) && (dwarf64 a1 == dwarf64 a2) && (target64 a1 == target64 a2)
 dwarfReader True  (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d True lo 0xffffffffffffffff w16 w32 w64 sz w64
-dwarfReader False (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d False lo 0xffffffff w16 w32 w64 sz (liftM fromIntegral w32)
+dwarfReader False (DwarfEndianSizeReader e w16 w32 w64 d lo sz) = DwarfReader e d False lo 0xffffffff w16 w32 w64 sz (fromIntegral <$> w32)
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-getForm dr str cu form = getForm_ dr str cu form
-getForm_ dr str cu DW_FORM_addr      = pure (DW_ATVAL_UINT . fromIntegral) <*> (getDwarfTargetAddress dr)
-getForm_ dr str cu DW_FORM_block1    = liftM fromIntegral getWord8       >>= getByteString >>= return . DW_ATVAL_BLOB
-getForm_ dr str cu DW_FORM_block2    = liftM fromIntegral (getWord16 dr) >>= getByteString >>= return . DW_ATVAL_BLOB
-getForm_ dr str cu DW_FORM_block4    = liftM fromIntegral (getWord32 dr) >>= getByteString >>= return . DW_ATVAL_BLOB
-getForm_ dr str cu DW_FORM_block     = liftM fromIntegral getULEB128     >>= getByteString >>= return . DW_ATVAL_BLOB
+getForm = getForm_
+getForm_ dr str cu DW_FORM_addr      = pure (DW_ATVAL_UINT . fromIntegral) <*> getDwarfTargetAddress dr
+getForm_ dr str cu DW_FORM_block1    = DW_ATVAL_BLOB <$> (fromIntegral <$> getWord8        >>= getByteString)
+getForm_ dr str cu DW_FORM_block2    = DW_ATVAL_BLOB <$> (fromIntegral <$> getWord16 dr    >>= getByteString)
+getForm_ dr str cu DW_FORM_block4    = DW_ATVAL_BLOB <$> (fromIntegral <$> getWord32 dr    >>= getByteString)
+getForm_ dr str cu DW_FORM_block     = DW_ATVAL_BLOB <$> (fromIntegral <$> getULEB128      >>= getByteString)
 getForm_ dr str cu DW_FORM_data1     = pure (DW_ATVAL_UINT . fromIntegral) <*> getWord8
-getForm_ dr str cu DW_FORM_data2     = pure (DW_ATVAL_UINT . fromIntegral) <*> (getWord16 dr)
-getForm_ dr str cu DW_FORM_data4     = pure (DW_ATVAL_UINT . fromIntegral) <*> (getWord32 dr)
-getForm_ dr str cu DW_FORM_data8     = pure (DW_ATVAL_UINT . fromIntegral) <*> (getWord64 dr)
+getForm_ dr str cu DW_FORM_data2     = pure (DW_ATVAL_UINT . fromIntegral) <*> getWord16 dr
+getForm_ dr str cu DW_FORM_data4     = pure (DW_ATVAL_UINT . fromIntegral) <*> getWord32 dr
+getForm_ dr str cu DW_FORM_data8     = pure (DW_ATVAL_UINT . fromIntegral) <*> getWord64 dr
 getForm_ dr str cu DW_FORM_udata     = pure DW_ATVAL_UINT <*> getULEB128
 getForm_ dr str cu DW_FORM_sdata     = pure DW_ATVAL_INT <*> getSLEB128
 getForm_ dr str cu DW_FORM_flag      = pure (DW_ATVAL_BOOL . (/= 0)) <*> getWord8
 getForm_ dr str cu DW_FORM_string    = pure DW_ATVAL_STRING <*> getNullTerminatedString
-getForm_ dr str cu DW_FORM_ref1      = pure (DW_ATVAL_UINT . (+) cu) <*> liftM fromIntegral getWord8
-getForm_ dr str cu DW_FORM_ref2      = pure (DW_ATVAL_UINT . (+) cu) <*> liftM fromIntegral (getWord16 dr)
-getForm_ dr str cu DW_FORM_ref4      = pure (DW_ATVAL_UINT . (+) cu) <*> liftM fromIntegral (getWord32 dr)
-getForm_ dr str cu DW_FORM_ref8      = pure (DW_ATVAL_UINT . (+) cu) <*> liftM fromIntegral (getWord64 dr)
-getForm_ dr str cu DW_FORM_ref_udata = pure (DW_ATVAL_UINT . (+) cu) <*> liftM fromIntegral getULEB128
+getForm_ dr str cu DW_FORM_ref1      = pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getWord8
+getForm_ dr str cu DW_FORM_ref2      = pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getWord16 dr
+getForm_ dr str cu DW_FORM_ref4      = pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getWord32 dr
+getForm_ dr str cu DW_FORM_ref8      = pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getWord64 dr
+getForm_ dr str cu DW_FORM_ref_udata = pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getULEB128
 getForm_ dr str cu DW_FORM_ref_addr  = pure DW_ATVAL_UINT <*> getDwarfOffset dr
 getForm_ dr str cu DW_FORM_indirect  = getULEB128 >>= getForm dr str cu . dw_form
 getForm_ dr str cu DW_FORM_strp      = do
-    offset <- liftM fromIntegral (getDwarfOffset dr)
-    return $ DW_ATVAL_STRING $ runGet getNullTerminatedString (L.fromChunks [B.drop offset str])
+    offset <- fromIntegral <$> getDwarfOffset dr
+    pure $ DW_ATVAL_STRING $ runGet getNullTerminatedString (L.fromChunks [B.drop offset str])
 
 data DW_ABBREV = DW_ABBREV
     { abbrevNum       :: Word64
@@ -221,15 +221,15 @@ getAbbrevList :: Get [(Word64, DW_ABBREV)]
 getAbbrevList =
   do abbrev <- getULEB128
      if abbrev == 0
-       then return []
+       then pure []
        else do tag       <- getDW_TAG
-               children  <- liftM (== 1) getWord8
+               children  <- (== 1) <$> getWord8
                attrForms <- getAttrFormList
                xs <- getAbbrevList
-               return  ((abbrev, DW_ABBREV abbrev tag children attrForms) : xs)
+               pure  ((abbrev, DW_ABBREV abbrev tag children attrForms) : xs)
   where
-  getAttrFormList = liftM (map (\(x,y) -> (dw_at x, dw_form y)))
-                  $ getWhile (/= (0,0)) (liftM2 (,) getULEB128 getULEB128)
+  getAttrFormList = (fmap . map) (dw_at *** dw_form)
+                  . getWhile (/= (0,0)) $ (,) <$> getULEB128 <*> getULEB128
 
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -255,37 +255,37 @@ data DIE = DIE
 
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
 getDieTree parent lsibling abbrev_map dr str_section cu_offset = do
-    offset <- liftM fromIntegral bytesRead
+    offset <- fromIntegral <$> Get.bytesRead
     abbrid <- getULEB128
     if abbrid == 0 then
-        return []
+        pure []
      else do
         let abbrev         = abbrev_map M.! abbrid
             tag            = abbrevTag abbrev
             has_children   = abbrevChildren abbrev
             (attrs, forms) = unzip $ abbrevAttrForms abbrev
         values    <- mapM (getForm dr str_section cu_offset) forms
-        ancestors <- if has_children then getDieTree (Just offset) Nothing abbrev_map dr str_section cu_offset else return []
+        ancestors <- if has_children then getDieTree (Just offset) Nothing abbrev_map dr str_section cu_offset else pure []
         siblings  <- getDieTree parent (Just offset) abbrev_map dr str_section cu_offset
-        let children = map dieId $ filter (\x -> if isJust (dieParent x) then fromJust (dieParent x) == offset else False) ancestors
+        let children = map dieId $ filter (maybe False (== offset) . dieParent) ancestors
             rsibling = if null siblings then Nothing else Just $ dieId $ head siblings
-        return $ (DIE offset parent children lsibling rsibling tag (zip attrs values) dr : ancestors) ++ siblings
+        pure $ (DIE offset parent children lsibling rsibling tag (zip attrs values) dr : ancestors) ++ siblings
 
 -- Decode the compilation unit DWARF information entries.
 getDieCus cu_lsibling odr abbrev_section str_section = do
-    empty <- isEmpty
+    empty <- Get.isEmpty
     if empty then
-        return []
+        pure []
      else do
-        cu_offset       <- liftM fromIntegral bytesRead
-        (dr@(DwarfEndianSizeReader _ w16 _ _ _ _ sz), _) <- getDwarfUnitLength odr
+        cu_offset       <- fromIntegral <$> Get.bytesRead
+        (der@(DwarfEndianSizeReader _ w16 _ _ _ _ sz), _) <- getDwarfUnitLength odr
         version         <- w16
         abbrev_offset   <- sz
         addr_size       <- getWord8
-        dr              <- return $ case addr_size of
-                            4 -> dwarfReader False dr
-                            8 -> dwarfReader True dr
-        cu_die_offset   <- liftM fromIntegral bytesRead
+        let dr          = case addr_size of
+                            4 -> dwarfReader False der
+                            8 -> dwarfReader True der
+        cu_die_offset   <- fromIntegral <$> Get.bytesRead
         cu_abbr_num     <- getULEB128
         let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
             abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
@@ -294,17 +294,17 @@ getDieCus cu_lsibling odr abbrev_section str_section = do
             cu_has_children      = abbrevChildren cu_abbrev
             (cu_attrs, cu_forms) = unzip $ abbrevAttrForms cu_abbrev
         cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
-        cu_ancestors <- if cu_has_children then getDieTree (Just cu_die_offset) Nothing abbrev_map dr str_section cu_offset else return []
+        cu_ancestors <- if cu_has_children then getDieTree (Just cu_die_offset) Nothing abbrev_map dr str_section cu_offset else pure []
         cu_siblings  <- getDieCus Nothing odr abbrev_section str_section
         let cu_children = map dieId $ filter (maybe False (== cu_die_offset) . dieParent) cu_ancestors
             cu_rsibling = if null cu_siblings then Nothing else Just $ dieId $ head cu_siblings
-        return $ (DIE cu_die_offset Nothing cu_children cu_lsibling cu_rsibling cu_tag (zip cu_attrs cu_values) dr : cu_ancestors) ++ cu_siblings
+        pure $ (DIE cu_die_offset Nothing cu_children cu_lsibling cu_rsibling cu_tag (zip cu_attrs cu_values) dr : cu_ancestors) ++ cu_siblings
 
 -- | Returns compilation unit id given the header offset into .debug_info
 infoCompileUnit  :: B.ByteString -- ^ Contents of .debug_info
                  -> Word64 -- ^ Offset into .debug_info header
                  -> Word64 -- ^ Offset of compile unit DIE.
-infoCompileUnit infoSection offset = do
+infoCompileUnit infoSection offset =
   case runGet getWord32be
         (L.fromChunks [B.drop (fromIntegral offset) infoSection]) of
     0xffffffff -> offset + 23
@@ -326,26 +326,26 @@ getNameLookupEntries :: DwarfReader -> Word64 -> Get [(String, [Word64])]
 getNameLookupEntries dr cu_offset = do
     die_offset <- getDwarfOffset dr
     if die_offset == 0 then
-        return []
+        pure []
      else do
         name <- getNullTerminatedString
         rest <- getNameLookupEntries dr cu_offset
-        return $ (name, [cu_offset + die_offset]) : rest
+        pure $ (name, [cu_offset + die_offset]) : rest
 
 getNameLookupTable :: Bool -> DwarfEndianReader -> Get [M.Map String [Word64]]
 getNameLookupTable target64 odr = do
-    empty <- isEmpty
+    empty <- Get.isEmpty
     if empty then
-        return []
+        pure []
      else do
-        (dr, _)           <- getDwarfUnitLength odr
-        dr                <- return $ dwarfReader target64 dr
+        (der, _)          <- getDwarfUnitLength odr
+        let dr            = dwarfReader target64 der
         version           <- getWord16 dr
         debug_info_offset <- getDwarfOffset dr
         debug_info_length <- getDwarfOffset dr
-        pubNames          <- liftM (M.fromListWith (++)) (getNameLookupEntries dr debug_info_offset)
+        pubNames          <- M.fromListWith (++) <$> getNameLookupEntries dr debug_info_offset
         rest              <- getNameLookupTable target64 odr
-        return $ pubNames : rest
+        pure $ pubNames : rest
 
 -- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a debug info id in the DwarfInfo.
 parseDwarfPubnames :: Bool -> Bool -> B.ByteString -> M.Map String [Word64]
@@ -361,30 +361,32 @@ parseDwarfPubtypes littleEndian target64 pubtypes_section =
 
 -- Section 7.20 - Address Range Table
 getAddressRangeTable target64 odr = do
-    empty <- isEmpty
+    empty <- Get.isEmpty
     if empty then
-        return []
+        pure []
      else do
-        (dr, _)           <- getDwarfUnitLength odr
-        dr                <- return $ dwarfReader target64 dr
+        (der, _)          <- getDwarfUnitLength odr
+        let dr            = dwarfReader target64 der
         version           <- getWord16 dr
         debug_info_offset <- getDwarfOffset dr
-        address_size      <- liftM fromIntegral getWord8
-        segment_size      <- liftM fromIntegral getWord8
-        bytes_read        <- bytesRead
-        skip $ fromIntegral (2 * address_size - (bytes_read `mod` (2 * address_size)))
+        address_size      <- fromIntegral <$> getWord8
+        segment_size      <- fromIntegral <$> getWord8
+        bytes_read        <- Get.bytesRead
+        Get.skip $ fromIntegral (2 * address_size - (bytes_read `mod` (2 * address_size)))
         address_ranges    <- case address_size of
-                            4 -> getWhile (/= (0, 0)) (liftM2 (,) (liftM fromIntegral (getWord32 dr)) (liftM fromIntegral (getWord32 dr)))
-                            8 -> getWhile (/= (0, 0)) (liftM2 (,) (getWord64 dr) (getWord64 dr))
+                            4 -> getWhile (/= (0, 0)) $ (,) <$> (fromIntegral <$> getWord32 dr) <*> (fromIntegral <$> getWord32 dr)
+                            8 -> getWhile (/= (0, 0)) $ (,) <$> getWord64 dr <*> getWord64 dr
                             n -> fail ("Unrecognized address size " ++ show address_size ++ " in .debug_aranges section.")
         rest              <- getAddressRangeTable target64 odr
-        return $ (address_ranges, debug_info_offset) : rest
+        pure $ (address_ranges, debug_info_offset) : rest
 
 -- | Parses  the .debug_aranges section (as ByteString) into a map from an address range to a debug info id that indexes the DwarfInfo.
 parseDwarfAranges :: Bool -> Bool -> B.ByteString -> [([(Word64, Word64)], Word64)]
 parseDwarfAranges littleEndian target64 aranges_section =
     let dr = dwarfEndianReader littleEndian
     in runGet (getAddressRangeTable target64 dr) $ L.fromChunks [aranges_section]
+
+{-# ANN module "HLint: ignore Use camelCase" #-}
 
 -- Section 7.21 - Line Number Information
 data DW_LNI
@@ -405,33 +407,33 @@ data DW_LNI
     | DW_LNE_set_address Word64
     | DW_LNE_define_file String Word64 Word64 Word64
     deriving (Show, Eq)
-getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = liftM fromIntegral getWord8 >>= getDW_LNI_
+getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromIntegral <$> getWord8 >>= getDW_LNI_
     where getDW_LNI_ 0x00 = do
-            length <- liftM fromIntegral getULEB128
+            length <- fromIntegral <$> getULEB128
             rest   <- getByteString length
-            return $ runGet getDW_LNE $ L.fromChunks [rest]
+            pure $ runGet getDW_LNE $ L.fromChunks [rest]
                 where getDW_LNE = getWord8 >>= getDW_LNE_
-                      getDW_LNE_ 0x01 = return DW_LNE_end_sequence
-                      getDW_LNE_ 0x02 = return DW_LNE_set_address <*> getDwarfTargetAddress dr
-                      getDW_LNE_ 0x03 = return DW_LNE_define_file <*> getNullTerminatedString <*> getULEB128 <*> getULEB128 <*> getULEB128
+                      getDW_LNE_ 0x01 = pure DW_LNE_end_sequence
+                      getDW_LNE_ 0x02 = pure DW_LNE_set_address <*> getDwarfTargetAddress dr
+                      getDW_LNE_ 0x03 = pure DW_LNE_define_file <*> getNullTerminatedString <*> getULEB128 <*> getULEB128 <*> getULEB128
                       getDW_LNE_ n | 0x80 <= n && n <= 0xff = fail $ "User DW_LNE data requires extension of parser for code " ++ show n
                       getDW_LNE_ n = fail $ "Unexpected DW_LNE code " ++ show n
-          getDW_LNI_ 0x01 = return DW_LNS_copy
-          getDW_LNI_ 0x02 = return DW_LNS_advance_pc <*> liftM (* minimum_instruction_length) getULEB128
-          getDW_LNI_ 0x03 = return DW_LNS_advance_line <*> getSLEB128
-          getDW_LNI_ 0x04 = return DW_LNS_set_file <*> getULEB128
-          getDW_LNI_ 0x05 = return DW_LNS_set_column <*> getULEB128
-          getDW_LNI_ 0x06 = return DW_LNS_negate_stmt
-          getDW_LNI_ 0x07 = return DW_LNS_set_basic_block
-          getDW_LNI_ 0x08 = return $ DW_LNS_const_add_pc (minimum_instruction_length * fromIntegral ((255 - opcode_base) `div` line_range))
-          getDW_LNI_ 0x09 = return DW_LNS_fixed_advance_pc <*> liftM fromIntegral (getWord16 dr)
-          getDW_LNI_ 0x0a = return DW_LNS_set_prologue_end
-          getDW_LNI_ 0x0b = return DW_LNS_set_epilogue_begin
-          getDW_LNI_ 0x0c = return DW_LNS_set_isa <*> getULEB128
+          getDW_LNI_ 0x01 = pure DW_LNS_copy
+          getDW_LNI_ 0x02 = pure DW_LNS_advance_pc <*> (* minimum_instruction_length) <$> getULEB128
+          getDW_LNI_ 0x03 = pure DW_LNS_advance_line <*> getSLEB128
+          getDW_LNI_ 0x04 = pure DW_LNS_set_file <*> getULEB128
+          getDW_LNI_ 0x05 = pure DW_LNS_set_column <*> getULEB128
+          getDW_LNI_ 0x06 = pure DW_LNS_negate_stmt
+          getDW_LNI_ 0x07 = pure DW_LNS_set_basic_block
+          getDW_LNI_ 0x08 = pure $ DW_LNS_const_add_pc (minimum_instruction_length * fromIntegral ((255 - opcode_base) `div` line_range))
+          getDW_LNI_ 0x09 = pure DW_LNS_fixed_advance_pc <*> fromIntegral <$> getWord16 dr
+          getDW_LNI_ 0x0a = pure DW_LNS_set_prologue_end
+          getDW_LNI_ 0x0b = pure DW_LNS_set_epilogue_begin
+          getDW_LNI_ 0x0c = pure DW_LNS_set_isa <*> getULEB128
           getDW_LNI_ n | n >= opcode_base =
             let addr_incr = minimum_instruction_length * fromIntegral ((n - opcode_base) `div` line_range)
                 line_incr = line_base + fromIntegral ((n - opcode_base) `mod` line_range)
-             in return $ DW_LNI_special addr_incr line_incr
+             in pure $ DW_LNI_special addr_incr line_incr
           getDW_LNI_ n = fail $ "Unexpected DW_LNI opcode " ++ show n
 
 stepLineMachine :: Bool -> Word8 -> DW_LNE -> [DW_LNI] -> [DW_LNE]
@@ -485,7 +487,7 @@ stepLineMachine is_stmt mil lnm (DW_LNE_set_address address : xs) =
     let new = lnm { lnmAddress = address }
     in stepLineMachine is_stmt mil new xs
 stepLineMachine is_stmt mil lnm (DW_LNE_define_file name dir_index time length : xs) =
-    let new = lnm { lnmFiles = (lnmFiles lnm) ++ [(name, dir_index, time, length)] }
+    let new = lnm { lnmFiles = lnmFiles lnm ++ [(name, dir_index, time, length)] }
     in stepLineMachine is_stmt mil new xs
 
 data DW_LNE = DW_LNE
@@ -518,12 +520,12 @@ defaultLNE is_stmt files = DW_LNE
 getDebugLineFileNames = do
     file_name <- getNullTerminatedString
     if file_name == [] then
-        return []
+        pure []
      else do
         dir_index   <- getULEB128
         last_mod    <- getULEB128
         file_length <- getULEB128
-        liftM2 (:) (return (file_name, dir_index, last_mod, file_length)) getDebugLineFileNames
+        ((file_name, dir_index, last_mod, file_length) :) <$> getDebugLineFileNames
 
 -- | Retrieves the line information for a DIE from a given substring of the .debug_line section. The offset
 -- into the .debug_line section is obtained from the DW_AT_stmt_list attribute of a DIE.
@@ -535,26 +537,26 @@ getDwarfLine target64 dr = do
     let getWhileInclusive cond get = do
         el <- get
         if cond el then
-            liftM (el :) $ getWhileInclusive cond get
+            (el :) <$> getWhileInclusive cond get
          else
-            return [el]
-    (dr, sectLen)              <- getDwarfUnitLength dr
-    startLen <- bytesRead
-    dr                         <- return $ dwarfReader target64 dr
+            pure [el]
+    (der, sectLen)             <- getDwarfUnitLength dr
+    startLen <- Get.bytesRead
+    let dr                     = dwarfReader target64 der
     version                    <- getWord16 dr
     header_length              <- getDwarfOffset dr
     minimum_instruction_length <- getWord8
-    default_is_stmt            <- liftM (/= 0) getWord8
+    default_is_stmt            <- (/= 0) <$> getWord8
     line_base                  <- get :: Get Int8
     line_range                 <- getWord8
     opcode_base                <- getWord8
     standard_opcode_lengths    <- replicateM (fromIntegral opcode_base - 1) getWord8
     include_directories        <- getWhile (/= "") getNullTerminatedString
     file_names                 <- getDebugLineFileNames
-    endLen <- bytesRead
+    endLen <- Get.bytesRead
     -- Check if we have reached the end of the section.
     if fromIntegral sectLen <= endLen - startLen
-      then return (map (\(name, _, _, _) -> name) file_names, [])
+      then pure (map (\(name, _, _, _) -> name) file_names, [])
       else do
         line_program <- getWhileInclusive (/= DW_LNE_end_sequence) $
                            getDW_LNI dr (fromIntegral line_base)
@@ -563,7 +565,7 @@ getDwarfLine target64 dr = do
                                         (fromIntegral minimum_instruction_length)
         let initial_state = defaultLNE default_is_stmt file_names
             line_matrix = stepLineMachine default_is_stmt minimum_instruction_length initial_state line_program
-         in return (map (\(name, _, _, _) -> name) file_names, line_matrix)
+         in pure (map (\(name, _, _, _) -> name) file_names, line_matrix)
 
 -- Section 7.21 - Macro Information
 data DW_MACINFO
@@ -581,11 +583,11 @@ parseDwarfMacInfo bs = runGet getDwarfMacInfo (L.fromChunks [bs])
 getDwarfMacInfo = do
     x <- getWord8
     case x of
-        0x00 -> return []
+        0x00 -> pure []
         0x01 -> pure (:) <*> (pure DW_MACINFO_define     <*> getULEB128 <*> getNullTerminatedString) <*> getDwarfMacInfo
         0x02 -> pure (:) <*> (pure DW_MACINFO_undef      <*> getULEB128 <*> getNullTerminatedString) <*> getDwarfMacInfo
         0x03 -> pure (:) <*> (pure DW_MACINFO_start_file <*> getULEB128 <*> getULEB128)              <*> getDwarfMacInfo
-        0x04 -> pure (:) <*> (pure DW_MACINFO_end_file)                                              <*> getDwarfMacInfo
+        0x04 -> pure (:) <*>  pure DW_MACINFO_end_file                                               <*> getDwarfMacInfo
         0xff -> pure (:) <*> (pure DW_MACINFO_vendor_ext <*> getULEB128 <*> getNullTerminatedString) <*> getDwarfMacInfo
 
 -- Section 7.22 - Call Frame
@@ -620,33 +622,33 @@ data DW_CFA
 getDW_CFA dr = do
     tag <- getWord8
     case tag `shiftR` 6 of
-        0x1 -> return $ DW_CFA_advance_loc $ tag .&. 0x3f
-        0x2 -> return (DW_CFA_offset (tag .&. 0x3f)) <*> getULEB128
-        0x3 -> return $ DW_CFA_restore $ tag .&. 0x3f
+        0x1 -> pure $ DW_CFA_advance_loc $ tag .&. 0x3f
+        0x2 -> pure (DW_CFA_offset (tag .&. 0x3f)) <*> getULEB128
+        0x3 -> pure $ DW_CFA_restore $ tag .&. 0x3f
         0x0 -> case tag .&. 0x3f of
-            0x00 -> return DW_CFA_nop
-            0x01 -> return DW_CFA_set_loc <*> getDwarfTargetAddress dr
-            0x02 -> return DW_CFA_advance_loc1 <*> getWord8
-            0x03 -> return DW_CFA_advance_loc2 <*> getWord16 dr
-            0x04 -> return DW_CFA_advance_loc4 <*> getWord32 dr
-            0x05 -> return DW_CFA_offset_extended <*> getULEB128 <*> getULEB128
-            0x06 -> return DW_CFA_restore_extended <*> getULEB128
-            0x07 -> return DW_CFA_undefined <*> getULEB128
-            0x08 -> return DW_CFA_same_value <*> getULEB128
-            0x09 -> return DW_CFA_register <*> getULEB128 <*> getULEB128
-            0x0a -> return DW_CFA_remember_state
-            0x0b -> return DW_CFA_restore_state
-            0x0c -> return DW_CFA_def_cfa <*> getULEB128 <*> getULEB128
-            0x0d -> return DW_CFA_def_cfa_register <*> getULEB128
-            0x0e -> return DW_CFA_def_cfa_offset <*> getULEB128
-            0x0f -> return DW_CFA_def_cfa_expression <*> (liftM fromIntegral getULEB128 >>= getByteString)
-            0x10 -> return DW_CFA_expression <*> getULEB128 <*> (liftM fromIntegral getULEB128 >>= getByteString)
-            0x11 -> return DW_CFA_offset_extended_sf <*> getULEB128 <*> getSLEB128
-            0x12 -> return DW_CFA_def_cfa_sf <*> getULEB128 <*> getSLEB128
-            0x13 -> return DW_CFA_def_cfa_offset_sf <*> getSLEB128
-            0x14 -> return DW_CFA_val_offset <*> getULEB128 <*> getULEB128
-            0x15 -> return DW_CFA_val_offset_sf <*> getULEB128 <*> getSLEB128
-            0x16 -> return DW_CFA_val_expression <*> getULEB128 <*> (liftM fromIntegral getULEB128 >>= getByteString)
+            0x00 -> pure DW_CFA_nop
+            0x01 -> pure DW_CFA_set_loc <*> getDwarfTargetAddress dr
+            0x02 -> pure DW_CFA_advance_loc1 <*> getWord8
+            0x03 -> pure DW_CFA_advance_loc2 <*> getWord16 dr
+            0x04 -> pure DW_CFA_advance_loc4 <*> getWord32 dr
+            0x05 -> pure DW_CFA_offset_extended <*> getULEB128 <*> getULEB128
+            0x06 -> pure DW_CFA_restore_extended <*> getULEB128
+            0x07 -> pure DW_CFA_undefined <*> getULEB128
+            0x08 -> pure DW_CFA_same_value <*> getULEB128
+            0x09 -> pure DW_CFA_register <*> getULEB128 <*> getULEB128
+            0x0a -> pure DW_CFA_remember_state
+            0x0b -> pure DW_CFA_restore_state
+            0x0c -> pure DW_CFA_def_cfa <*> getULEB128 <*> getULEB128
+            0x0d -> pure DW_CFA_def_cfa_register <*> getULEB128
+            0x0e -> pure DW_CFA_def_cfa_offset <*> getULEB128
+            0x0f -> pure DW_CFA_def_cfa_expression <*> (fromIntegral <$> getULEB128 >>= getByteString)
+            0x10 -> pure DW_CFA_expression <*> getULEB128 <*> (fromIntegral <$> getULEB128 >>= getByteString)
+            0x11 -> pure DW_CFA_offset_extended_sf <*> getULEB128 <*> getSLEB128
+            0x12 -> pure DW_CFA_def_cfa_sf <*> getULEB128 <*> getSLEB128
+            0x13 -> pure DW_CFA_def_cfa_offset_sf <*> getSLEB128
+            0x14 -> pure DW_CFA_val_offset <*> getULEB128 <*> getULEB128
+            0x15 -> pure DW_CFA_val_offset_sf <*> getULEB128 <*> getSLEB128
+            0x16 -> pure DW_CFA_val_expression <*> getULEB128 <*> (fromIntegral <$> getULEB128 >>= getByteString)
 
 data DW_CIEFDE
     = DW_CIE
@@ -666,17 +668,17 @@ data DW_CIEFDE
 
 getWhileNotEmpty :: Get a -> Get [a]
 getWhileNotEmpty get = do
-    empty <- isEmpty
+    empty <- Get.isEmpty
     if empty then
-        return []
-     else do
-        liftM2 (:) get (getWhileNotEmpty get)
+        pure []
+     else
+        (:) <$> get <*> getWhileNotEmpty get
 
 getCIEFDE littleEndian target64 = do
-    dr           <- return $ dwarfEndianReader littleEndian
-    (dr, length) <- getDwarfUnitLength dr
-    dr           <- return $ dwarfReader target64 dr
-    begin        <- bytesRead
+    let der      = dwarfEndianReader littleEndian
+    (dur, length) <- getDwarfUnitLength der
+    let dr       = dwarfReader target64 dur
+    begin        <- Get.bytesRead
     cie_id       <- getDwarfOffset dr
     if cie_id == largestOffset dr then do
         version                 <- getWord8
@@ -684,20 +686,20 @@ getCIEFDE littleEndian target64 = do
         code_alignment_factor   <- getULEB128
         data_alignment_factor   <- getSLEB128
         return_address_register <- case version of
-                                    1 -> liftM fromIntegral $ getWord8
+                                    1 -> fromIntegral <$> getWord8
                                     3 -> getULEB128
                                     n -> fail $ "Unrecognized CIE version " ++ show n
-        end                     <- bytesRead
+        end                     <- Get.bytesRead
         raw_instructions        <- getByteString $ fromIntegral (fromIntegral length - (end - begin))
-        initial_instructions    <- return $ runGet (getWhileNotEmpty (getDW_CFA dr)) $ L.fromChunks [raw_instructions]
-        return $ DW_CIE augmentation code_alignment_factor data_alignment_factor return_address_register initial_instructions
+        let initial_instructions = runGet (getWhileNotEmpty (getDW_CFA dr)) $ L.fromChunks [raw_instructions]
+        pure $ DW_CIE augmentation code_alignment_factor data_alignment_factor return_address_register initial_instructions
      else do
         initial_location        <- getDwarfTargetAddress dr
         address_range           <- getDwarfTargetAddress dr
-        end                     <- bytesRead
+        end                     <- Get.bytesRead
         raw_instructions        <- getByteString $ fromIntegral (fromIntegral length - (end - begin))
-        instructions            <- return $ runGet (getWhileNotEmpty (getDW_CFA dr)) $ L.fromChunks [raw_instructions]
-        return $ DW_FDE cie_id initial_location address_range instructions
+        let instructions        = runGet (getWhileNotEmpty (getDW_CFA dr)) $ L.fromChunks [raw_instructions]
+        pure $ DW_FDE cie_id initial_location address_range instructions
 
 -- | Parse the .debug_frame section into a list of DW_CIEFDE records.
 parseDwarfFrame :: Bool         -- ^ True for little endian data. False for big endian.
@@ -716,11 +718,11 @@ getDwarfRanges dr = do
     begin <- getDwarfTargetAddress dr
     end   <- getDwarfTargetAddress dr
     if begin == 0 && end == 0 then
-        return []
+        pure []
      else if begin == largestTargetAddress dr then
-        return (Left end :) <*> getDwarfRanges dr
+        pure (Left end :) <*> getDwarfRanges dr
      else
-        return (Right (begin, end) :) <*> getDwarfRanges dr
+        pure (Right (begin, end) :) <*> getDwarfRanges dr
 
 -- Section 7.7.3
 -- | Retrieves the location list expressions from a given substring of the .debug_loc section. The offset
@@ -732,13 +734,13 @@ getDwarfLoc dr = do
     begin <- getDwarfTargetAddress dr
     end   <- getDwarfTargetAddress dr
     if begin == 0 && end == 0 then
-        return []
+        pure []
      else if begin == largestTargetAddress dr then
-        return (Left end :) <*> getDwarfLoc dr
+        pure (Left end :) <*> getDwarfLoc dr
       else do
-        len  <- liftM fromIntegral (getWord16 dr)
+        len  <- fromIntegral <$> getWord16 dr
         expr <- getByteString len
-        return (Right (begin, end, expr) :) <*> getDwarfLoc dr
+        pure (Right (begin, end, expr) :) <*> getDwarfLoc dr
 
 data DW_TAG
     = DW_TAG_array_type
@@ -800,63 +802,63 @@ data DW_TAG
     | DW_TAG_shared_type
     deriving (Show, Eq)
 getDW_TAG = getULEB128 >>= dw_tag
-    where dw_tag 0x01 = return DW_TAG_array_type
-          dw_tag 0x02 = return DW_TAG_class_type
-          dw_tag 0x03 = return DW_TAG_entry_point
-          dw_tag 0x04 = return DW_TAG_enumeration_type
-          dw_tag 0x05 = return DW_TAG_formal_parameter
-          dw_tag 0x08 = return DW_TAG_imported_declaration
-          dw_tag 0x0a = return DW_TAG_label
-          dw_tag 0x0b = return DW_TAG_lexical_block
-          dw_tag 0x0d = return DW_TAG_member
-          dw_tag 0x0f = return DW_TAG_pointer_type
-          dw_tag 0x10 = return DW_TAG_reference_type
-          dw_tag 0x11 = return DW_TAG_compile_unit
-          dw_tag 0x12 = return DW_TAG_string_type
-          dw_tag 0x13 = return DW_TAG_structure_type
-          dw_tag 0x15 = return DW_TAG_subroutine_type
-          dw_tag 0x16 = return DW_TAG_typedef
-          dw_tag 0x17 = return DW_TAG_union_type
-          dw_tag 0x18 = return DW_TAG_unspecified_parameters
-          dw_tag 0x19 = return DW_TAG_variant
-          dw_tag 0x1a = return DW_TAG_common_block
-          dw_tag 0x1b = return DW_TAG_common_inclusion
-          dw_tag 0x1c = return DW_TAG_inheritance
-          dw_tag 0x1d = return DW_TAG_inlined_subroutine
-          dw_tag 0x1e = return DW_TAG_module
-          dw_tag 0x1f = return DW_TAG_ptr_to_member_type
-          dw_tag 0x20 = return DW_TAG_set_type
-          dw_tag 0x21 = return DW_TAG_subrange_type
-          dw_tag 0x22 = return DW_TAG_with_stmt
-          dw_tag 0x23 = return DW_TAG_access_declaration
-          dw_tag 0x24 = return DW_TAG_base_type
-          dw_tag 0x25 = return DW_TAG_catch_block
-          dw_tag 0x26 = return DW_TAG_const_type
-          dw_tag 0x27 = return DW_TAG_constant
-          dw_tag 0x28 = return DW_TAG_enumerator
-          dw_tag 0x29 = return DW_TAG_file_type
-          dw_tag 0x2a = return DW_TAG_friend
-          dw_tag 0x2b = return DW_TAG_namelist
-          dw_tag 0x2c = return DW_TAG_namelist_item
-          dw_tag 0x2d = return DW_TAG_packed_type
-          dw_tag 0x2e = return DW_TAG_subprogram
-          dw_tag 0x2f = return DW_TAG_template_type_parameter
-          dw_tag 0x30 = return DW_TAG_template_value_parameter
-          dw_tag 0x31 = return DW_TAG_thrown_type
-          dw_tag 0x32 = return DW_TAG_try_block
-          dw_tag 0x33 = return DW_TAG_variant_part
-          dw_tag 0x34 = return DW_TAG_variable
-          dw_tag 0x35 = return DW_TAG_volatile_type
-          dw_tag 0x36 = return DW_TAG_dwarf_procedure
-          dw_tag 0x37 = return DW_TAG_restrict_type
-          dw_tag 0x38 = return DW_TAG_interface_type
-          dw_tag 0x39 = return DW_TAG_namespace
-          dw_tag 0x3a = return DW_TAG_imported_module
-          dw_tag 0x3b = return DW_TAG_unspecified_type
-          dw_tag 0x3c = return DW_TAG_partial_unit
-          dw_tag 0x3d = return DW_TAG_imported_unit
-          dw_tag 0x3f = return DW_TAG_condition
-          dw_tag 0x40 = return DW_TAG_shared_type
+    where dw_tag 0x01 = pure DW_TAG_array_type
+          dw_tag 0x02 = pure DW_TAG_class_type
+          dw_tag 0x03 = pure DW_TAG_entry_point
+          dw_tag 0x04 = pure DW_TAG_enumeration_type
+          dw_tag 0x05 = pure DW_TAG_formal_parameter
+          dw_tag 0x08 = pure DW_TAG_imported_declaration
+          dw_tag 0x0a = pure DW_TAG_label
+          dw_tag 0x0b = pure DW_TAG_lexical_block
+          dw_tag 0x0d = pure DW_TAG_member
+          dw_tag 0x0f = pure DW_TAG_pointer_type
+          dw_tag 0x10 = pure DW_TAG_reference_type
+          dw_tag 0x11 = pure DW_TAG_compile_unit
+          dw_tag 0x12 = pure DW_TAG_string_type
+          dw_tag 0x13 = pure DW_TAG_structure_type
+          dw_tag 0x15 = pure DW_TAG_subroutine_type
+          dw_tag 0x16 = pure DW_TAG_typedef
+          dw_tag 0x17 = pure DW_TAG_union_type
+          dw_tag 0x18 = pure DW_TAG_unspecified_parameters
+          dw_tag 0x19 = pure DW_TAG_variant
+          dw_tag 0x1a = pure DW_TAG_common_block
+          dw_tag 0x1b = pure DW_TAG_common_inclusion
+          dw_tag 0x1c = pure DW_TAG_inheritance
+          dw_tag 0x1d = pure DW_TAG_inlined_subroutine
+          dw_tag 0x1e = pure DW_TAG_module
+          dw_tag 0x1f = pure DW_TAG_ptr_to_member_type
+          dw_tag 0x20 = pure DW_TAG_set_type
+          dw_tag 0x21 = pure DW_TAG_subrange_type
+          dw_tag 0x22 = pure DW_TAG_with_stmt
+          dw_tag 0x23 = pure DW_TAG_access_declaration
+          dw_tag 0x24 = pure DW_TAG_base_type
+          dw_tag 0x25 = pure DW_TAG_catch_block
+          dw_tag 0x26 = pure DW_TAG_const_type
+          dw_tag 0x27 = pure DW_TAG_constant
+          dw_tag 0x28 = pure DW_TAG_enumerator
+          dw_tag 0x29 = pure DW_TAG_file_type
+          dw_tag 0x2a = pure DW_TAG_friend
+          dw_tag 0x2b = pure DW_TAG_namelist
+          dw_tag 0x2c = pure DW_TAG_namelist_item
+          dw_tag 0x2d = pure DW_TAG_packed_type
+          dw_tag 0x2e = pure DW_TAG_subprogram
+          dw_tag 0x2f = pure DW_TAG_template_type_parameter
+          dw_tag 0x30 = pure DW_TAG_template_value_parameter
+          dw_tag 0x31 = pure DW_TAG_thrown_type
+          dw_tag 0x32 = pure DW_TAG_try_block
+          dw_tag 0x33 = pure DW_TAG_variant_part
+          dw_tag 0x34 = pure DW_TAG_variable
+          dw_tag 0x35 = pure DW_TAG_volatile_type
+          dw_tag 0x36 = pure DW_TAG_dwarf_procedure
+          dw_tag 0x37 = pure DW_TAG_restrict_type
+          dw_tag 0x38 = pure DW_TAG_interface_type
+          dw_tag 0x39 = pure DW_TAG_namespace
+          dw_tag 0x3a = pure DW_TAG_imported_module
+          dw_tag 0x3b = pure DW_TAG_unspecified_type
+          dw_tag 0x3c = pure DW_TAG_partial_unit
+          dw_tag 0x3d = pure DW_TAG_imported_unit
+          dw_tag 0x3f = pure DW_TAG_condition
+          dw_tag 0x40 = pure DW_TAG_shared_type
           dw_tag n | 0x4080 <= n && n <= 0xffff = fail $ "User DW_TAG data requires extension of parser for code " ++ show n
           dw_tag n = fail $ "Unrecognized DW_TAG " ++ show n
 
@@ -945,7 +947,7 @@ data DW_AT
     | DW_AT_object_pointer       -- ^ reference
     | DW_AT_endianity            -- ^ constant
     | DW_AT_elemental            -- ^ flag
-    | DW_AT_pure                 -- ^ flag
+    | DW_AT_return                 -- ^ flag
     | DW_AT_recursive            -- ^ flag
     | DW_AT_user Word64          -- ^ user extension
     deriving (Show, Eq)
@@ -1033,9 +1035,9 @@ dw_at 0x63 = DW_AT_explicit
 dw_at 0x64 = DW_AT_object_pointer
 dw_at 0x65 = DW_AT_endianity
 dw_at 0x66 = DW_AT_elemental
-dw_at 0x67 = DW_AT_pure
+dw_at 0x67 = DW_AT_return
 dw_at 0x68 = DW_AT_recursive
-dw_at n | 0x2000 <= n && n <= 0x3fff = DW_AT_user n 
+dw_at n | 0x2000 <= n && n <= 0x3fff = DW_AT_user n
 dw_at n = error $ "Unrecognized DW_AT " ++ show n
 
 data DW_ATVAL
@@ -1250,158 +1252,158 @@ data DW_OP
 parseDW_OP :: DwarfReader -> B.ByteString -> DW_OP
 parseDW_OP dr bs = runGet (getDW_OP dr) (L.fromChunks [bs])
 getDW_OP dr = getWord8 >>= getDW_OP_
-    where getDW_OP_ 0x03 = return DW_OP_addr <*> getDwarfTargetAddress dr
-          getDW_OP_ 0x06 = return DW_OP_deref
-          getDW_OP_ 0x08 = return DW_OP_const1u <*> liftM fromIntegral getWord8
-          getDW_OP_ 0x09 = return DW_OP_const1s <*> liftM fromIntegral getWord8
-          getDW_OP_ 0x0a = return DW_OP_const2u <*> liftM fromIntegral (getWord16 dr)
-          getDW_OP_ 0x0b = return DW_OP_const2s <*> liftM fromIntegral (getWord16 dr)
-          getDW_OP_ 0x0c = return DW_OP_const4u <*> liftM fromIntegral (getWord32 dr)
-          getDW_OP_ 0x0d = return DW_OP_const4s <*> liftM fromIntegral (getWord32 dr)
-          getDW_OP_ 0x0e = return DW_OP_const8u <*> getWord64 dr
-          getDW_OP_ 0x0f = return DW_OP_const8s <*> liftM fromIntegral (getWord64 dr)
-          getDW_OP_ 0x10 = return DW_OP_constu  <*> getULEB128
-          getDW_OP_ 0x11 = return DW_OP_consts  <*> getSLEB128
-          getDW_OP_ 0x12 = return DW_OP_dup
-          getDW_OP_ 0x13 = return DW_OP_drop
-          getDW_OP_ 0x14 = return DW_OP_over
-          getDW_OP_ 0x15 = return DW_OP_pick <*> getWord8
-          getDW_OP_ 0x16 = return DW_OP_swap
-          getDW_OP_ 0x17 = return DW_OP_rot
-          getDW_OP_ 0x18 = return DW_OP_xderef
-          getDW_OP_ 0x19 = return DW_OP_abs
-          getDW_OP_ 0x1a = return DW_OP_and
-          getDW_OP_ 0x1b = return DW_OP_div
-          getDW_OP_ 0x1c = return DW_OP_minus
-          getDW_OP_ 0x1d = return DW_OP_mod
-          getDW_OP_ 0x1e = return DW_OP_mul
-          getDW_OP_ 0x1f = return DW_OP_neg
-          getDW_OP_ 0x20 = return DW_OP_not
-          getDW_OP_ 0x21 = return DW_OP_or
-          getDW_OP_ 0x22 = return DW_OP_plus
-          getDW_OP_ 0x23 = return DW_OP_plus_uconst <*> getULEB128
-          getDW_OP_ 0x24 = return DW_OP_shl
-          getDW_OP_ 0x25 = return DW_OP_shr
-          getDW_OP_ 0x26 = return DW_OP_shra
-          getDW_OP_ 0x27 = return DW_OP_xor
-          getDW_OP_ 0x2f = return DW_OP_skip <*> liftM fromIntegral (getWord16 dr)
-          getDW_OP_ 0x28 = return DW_OP_bra  <*> liftM fromIntegral (getWord16 dr)
-          getDW_OP_ 0x29 = return DW_OP_eq
-          getDW_OP_ 0x2a = return DW_OP_ge
-          getDW_OP_ 0x2b = return DW_OP_gt
-          getDW_OP_ 0x2c = return DW_OP_le
-          getDW_OP_ 0x2d = return DW_OP_lt
-          getDW_OP_ 0x2e = return DW_OP_ne
-          getDW_OP_ 0x30 = return DW_OP_lit0
-          getDW_OP_ 0x31 = return DW_OP_lit1
-          getDW_OP_ 0x32 = return DW_OP_lit2
-          getDW_OP_ 0x33 = return DW_OP_lit3
-          getDW_OP_ 0x34 = return DW_OP_lit4
-          getDW_OP_ 0x35 = return DW_OP_lit5
-          getDW_OP_ 0x36 = return DW_OP_lit6
-          getDW_OP_ 0x37 = return DW_OP_lit7
-          getDW_OP_ 0x38 = return DW_OP_lit8
-          getDW_OP_ 0x39 = return DW_OP_lit9
-          getDW_OP_ 0x3a = return DW_OP_lit10
-          getDW_OP_ 0x3b = return DW_OP_lit11
-          getDW_OP_ 0x3c = return DW_OP_lit12
-          getDW_OP_ 0x3d = return DW_OP_lit13
-          getDW_OP_ 0x3e = return DW_OP_lit14
-          getDW_OP_ 0x3f = return DW_OP_lit15
-          getDW_OP_ 0x40 = return DW_OP_lit16
-          getDW_OP_ 0x41 = return DW_OP_lit17
-          getDW_OP_ 0x42 = return DW_OP_lit18
-          getDW_OP_ 0x43 = return DW_OP_lit19
-          getDW_OP_ 0x44 = return DW_OP_lit20
-          getDW_OP_ 0x45 = return DW_OP_lit21
-          getDW_OP_ 0x46 = return DW_OP_lit22
-          getDW_OP_ 0x47 = return DW_OP_lit23
-          getDW_OP_ 0x48 = return DW_OP_lit24
-          getDW_OP_ 0x49 = return DW_OP_lit25
-          getDW_OP_ 0x4a = return DW_OP_lit26
-          getDW_OP_ 0x4b = return DW_OP_lit27
-          getDW_OP_ 0x4c = return DW_OP_lit28
-          getDW_OP_ 0x4d = return DW_OP_lit29
-          getDW_OP_ 0x4e = return DW_OP_lit30
-          getDW_OP_ 0x4f = return DW_OP_lit31
-          getDW_OP_ 0x50 = return DW_OP_reg0
-          getDW_OP_ 0x51 = return DW_OP_reg1
-          getDW_OP_ 0x52 = return DW_OP_reg2
-          getDW_OP_ 0x53 = return DW_OP_reg3
-          getDW_OP_ 0x54 = return DW_OP_reg4
-          getDW_OP_ 0x55 = return DW_OP_reg5
-          getDW_OP_ 0x56 = return DW_OP_reg6
-          getDW_OP_ 0x57 = return DW_OP_reg7
-          getDW_OP_ 0x58 = return DW_OP_reg8
-          getDW_OP_ 0x59 = return DW_OP_reg9
-          getDW_OP_ 0x5a = return DW_OP_reg10
-          getDW_OP_ 0x5b = return DW_OP_reg11
-          getDW_OP_ 0x5c = return DW_OP_reg12
-          getDW_OP_ 0x5d = return DW_OP_reg13
-          getDW_OP_ 0x5e = return DW_OP_reg14
-          getDW_OP_ 0x5f = return DW_OP_reg15
-          getDW_OP_ 0x60 = return DW_OP_reg16
-          getDW_OP_ 0x61 = return DW_OP_reg17
-          getDW_OP_ 0x62 = return DW_OP_reg18
-          getDW_OP_ 0x63 = return DW_OP_reg19
-          getDW_OP_ 0x64 = return DW_OP_reg20
-          getDW_OP_ 0x65 = return DW_OP_reg21
-          getDW_OP_ 0x66 = return DW_OP_reg22
-          getDW_OP_ 0x67 = return DW_OP_reg23
-          getDW_OP_ 0x68 = return DW_OP_reg24
-          getDW_OP_ 0x69 = return DW_OP_reg25
-          getDW_OP_ 0x6a = return DW_OP_reg26
-          getDW_OP_ 0x6b = return DW_OP_reg27
-          getDW_OP_ 0x6c = return DW_OP_reg28
-          getDW_OP_ 0x6d = return DW_OP_reg29
-          getDW_OP_ 0x6e = return DW_OP_reg30
-          getDW_OP_ 0x6f = return DW_OP_reg31
-          getDW_OP_ 0x70 = return DW_OP_breg0  <*> getSLEB128
-          getDW_OP_ 0x71 = return DW_OP_breg1  <*> getSLEB128
-          getDW_OP_ 0x72 = return DW_OP_breg2  <*> getSLEB128
-          getDW_OP_ 0x73 = return DW_OP_breg3  <*> getSLEB128
-          getDW_OP_ 0x74 = return DW_OP_breg4  <*> getSLEB128
-          getDW_OP_ 0x75 = return DW_OP_breg5  <*> getSLEB128
-          getDW_OP_ 0x76 = return DW_OP_breg6  <*> getSLEB128
-          getDW_OP_ 0x77 = return DW_OP_breg7  <*> getSLEB128
-          getDW_OP_ 0x78 = return DW_OP_breg8  <*> getSLEB128
-          getDW_OP_ 0x79 = return DW_OP_breg9  <*> getSLEB128
-          getDW_OP_ 0x7a = return DW_OP_breg10 <*> getSLEB128
-          getDW_OP_ 0x7b = return DW_OP_breg11 <*> getSLEB128
-          getDW_OP_ 0x7c = return DW_OP_breg12 <*> getSLEB128
-          getDW_OP_ 0x7d = return DW_OP_breg13 <*> getSLEB128
-          getDW_OP_ 0x7e = return DW_OP_breg14 <*> getSLEB128
-          getDW_OP_ 0x7f = return DW_OP_breg15 <*> getSLEB128
-          getDW_OP_ 0x80 = return DW_OP_breg16 <*> getSLEB128
-          getDW_OP_ 0x81 = return DW_OP_breg17 <*> getSLEB128
-          getDW_OP_ 0x82 = return DW_OP_breg18 <*> getSLEB128
-          getDW_OP_ 0x83 = return DW_OP_breg19 <*> getSLEB128
-          getDW_OP_ 0x84 = return DW_OP_breg20 <*> getSLEB128
-          getDW_OP_ 0x85 = return DW_OP_breg21 <*> getSLEB128
-          getDW_OP_ 0x86 = return DW_OP_breg22 <*> getSLEB128
-          getDW_OP_ 0x87 = return DW_OP_breg23 <*> getSLEB128
-          getDW_OP_ 0x88 = return DW_OP_breg24 <*> getSLEB128
-          getDW_OP_ 0x89 = return DW_OP_breg25 <*> getSLEB128
-          getDW_OP_ 0x8a = return DW_OP_breg26 <*> getSLEB128
-          getDW_OP_ 0x8b = return DW_OP_breg27 <*> getSLEB128
-          getDW_OP_ 0x8c = return DW_OP_breg28 <*> getSLEB128
-          getDW_OP_ 0x8d = return DW_OP_breg29 <*> getSLEB128
-          getDW_OP_ 0x8e = return DW_OP_breg30 <*> getSLEB128
-          getDW_OP_ 0x8f = return DW_OP_breg31 <*> getSLEB128
-          getDW_OP_ 0x90 = return DW_OP_regx   <*> getULEB128
-          getDW_OP_ 0x91 = return DW_OP_fbreg  <*> getSLEB128
-          getDW_OP_ 0x92 = return DW_OP_bregx  <*> getULEB128 <*> getSLEB128
-          getDW_OP_ 0x93 = return DW_OP_piece  <*> getULEB128
-          getDW_OP_ 0x94 = return DW_OP_deref_size <*> getWord8
-          getDW_OP_ 0x95 = return DW_OP_xderef_size <*> getWord8
-          getDW_OP_ 0x96 = return DW_OP_nop
-          getDW_OP_ 0x97 = return DW_OP_push_object_address
-          getDW_OP_ 0x98 = return DW_OP_call2 <*> getWord16 dr
-          getDW_OP_ 0x99 = return DW_OP_call4 <*> getWord32 dr
-          getDW_OP_ 0x9a = return DW_OP_call_ref <*> getDwarfTargetAddress dr
-          getDW_OP_ 0x9b = return DW_OP_form_tls_address
-          getDW_OP_ 0x9c = return DW_OP_call_frame_cfa
-          getDW_OP_ 0x9d = return DW_OP_bit_piece <*> getULEB128 <*> getULEB128
+    where getDW_OP_ 0x03 = pure DW_OP_addr <*> getDwarfTargetAddress dr
+          getDW_OP_ 0x06 = pure DW_OP_deref
+          getDW_OP_ 0x08 = pure DW_OP_const1u <*> fromIntegral <$> getWord8
+          getDW_OP_ 0x09 = pure DW_OP_const1s <*> fromIntegral <$> getWord8
+          getDW_OP_ 0x0a = pure DW_OP_const2u <*> fromIntegral <$> getWord16 dr
+          getDW_OP_ 0x0b = pure DW_OP_const2s <*> fromIntegral <$> getWord16 dr
+          getDW_OP_ 0x0c = pure DW_OP_const4u <*> fromIntegral <$> getWord32 dr
+          getDW_OP_ 0x0d = pure DW_OP_const4s <*> fromIntegral <$> getWord32 dr
+          getDW_OP_ 0x0e = pure DW_OP_const8u <*> getWord64 dr
+          getDW_OP_ 0x0f = pure DW_OP_const8s <*> fromIntegral <$> getWord64 dr
+          getDW_OP_ 0x10 = pure DW_OP_constu  <*> getULEB128
+          getDW_OP_ 0x11 = pure DW_OP_consts  <*> getSLEB128
+          getDW_OP_ 0x12 = pure DW_OP_dup
+          getDW_OP_ 0x13 = pure DW_OP_drop
+          getDW_OP_ 0x14 = pure DW_OP_over
+          getDW_OP_ 0x15 = pure DW_OP_pick <*> getWord8
+          getDW_OP_ 0x16 = pure DW_OP_swap
+          getDW_OP_ 0x17 = pure DW_OP_rot
+          getDW_OP_ 0x18 = pure DW_OP_xderef
+          getDW_OP_ 0x19 = pure DW_OP_abs
+          getDW_OP_ 0x1a = pure DW_OP_and
+          getDW_OP_ 0x1b = pure DW_OP_div
+          getDW_OP_ 0x1c = pure DW_OP_minus
+          getDW_OP_ 0x1d = pure DW_OP_mod
+          getDW_OP_ 0x1e = pure DW_OP_mul
+          getDW_OP_ 0x1f = pure DW_OP_neg
+          getDW_OP_ 0x20 = pure DW_OP_not
+          getDW_OP_ 0x21 = pure DW_OP_or
+          getDW_OP_ 0x22 = pure DW_OP_plus
+          getDW_OP_ 0x23 = pure DW_OP_plus_uconst <*> getULEB128
+          getDW_OP_ 0x24 = pure DW_OP_shl
+          getDW_OP_ 0x25 = pure DW_OP_shr
+          getDW_OP_ 0x26 = pure DW_OP_shra
+          getDW_OP_ 0x27 = pure DW_OP_xor
+          getDW_OP_ 0x2f = pure DW_OP_skip <*> fromIntegral <$> getWord16 dr
+          getDW_OP_ 0x28 = pure DW_OP_bra  <*> fromIntegral <$> getWord16 dr
+          getDW_OP_ 0x29 = pure DW_OP_eq
+          getDW_OP_ 0x2a = pure DW_OP_ge
+          getDW_OP_ 0x2b = pure DW_OP_gt
+          getDW_OP_ 0x2c = pure DW_OP_le
+          getDW_OP_ 0x2d = pure DW_OP_lt
+          getDW_OP_ 0x2e = pure DW_OP_ne
+          getDW_OP_ 0x30 = pure DW_OP_lit0
+          getDW_OP_ 0x31 = pure DW_OP_lit1
+          getDW_OP_ 0x32 = pure DW_OP_lit2
+          getDW_OP_ 0x33 = pure DW_OP_lit3
+          getDW_OP_ 0x34 = pure DW_OP_lit4
+          getDW_OP_ 0x35 = pure DW_OP_lit5
+          getDW_OP_ 0x36 = pure DW_OP_lit6
+          getDW_OP_ 0x37 = pure DW_OP_lit7
+          getDW_OP_ 0x38 = pure DW_OP_lit8
+          getDW_OP_ 0x39 = pure DW_OP_lit9
+          getDW_OP_ 0x3a = pure DW_OP_lit10
+          getDW_OP_ 0x3b = pure DW_OP_lit11
+          getDW_OP_ 0x3c = pure DW_OP_lit12
+          getDW_OP_ 0x3d = pure DW_OP_lit13
+          getDW_OP_ 0x3e = pure DW_OP_lit14
+          getDW_OP_ 0x3f = pure DW_OP_lit15
+          getDW_OP_ 0x40 = pure DW_OP_lit16
+          getDW_OP_ 0x41 = pure DW_OP_lit17
+          getDW_OP_ 0x42 = pure DW_OP_lit18
+          getDW_OP_ 0x43 = pure DW_OP_lit19
+          getDW_OP_ 0x44 = pure DW_OP_lit20
+          getDW_OP_ 0x45 = pure DW_OP_lit21
+          getDW_OP_ 0x46 = pure DW_OP_lit22
+          getDW_OP_ 0x47 = pure DW_OP_lit23
+          getDW_OP_ 0x48 = pure DW_OP_lit24
+          getDW_OP_ 0x49 = pure DW_OP_lit25
+          getDW_OP_ 0x4a = pure DW_OP_lit26
+          getDW_OP_ 0x4b = pure DW_OP_lit27
+          getDW_OP_ 0x4c = pure DW_OP_lit28
+          getDW_OP_ 0x4d = pure DW_OP_lit29
+          getDW_OP_ 0x4e = pure DW_OP_lit30
+          getDW_OP_ 0x4f = pure DW_OP_lit31
+          getDW_OP_ 0x50 = pure DW_OP_reg0
+          getDW_OP_ 0x51 = pure DW_OP_reg1
+          getDW_OP_ 0x52 = pure DW_OP_reg2
+          getDW_OP_ 0x53 = pure DW_OP_reg3
+          getDW_OP_ 0x54 = pure DW_OP_reg4
+          getDW_OP_ 0x55 = pure DW_OP_reg5
+          getDW_OP_ 0x56 = pure DW_OP_reg6
+          getDW_OP_ 0x57 = pure DW_OP_reg7
+          getDW_OP_ 0x58 = pure DW_OP_reg8
+          getDW_OP_ 0x59 = pure DW_OP_reg9
+          getDW_OP_ 0x5a = pure DW_OP_reg10
+          getDW_OP_ 0x5b = pure DW_OP_reg11
+          getDW_OP_ 0x5c = pure DW_OP_reg12
+          getDW_OP_ 0x5d = pure DW_OP_reg13
+          getDW_OP_ 0x5e = pure DW_OP_reg14
+          getDW_OP_ 0x5f = pure DW_OP_reg15
+          getDW_OP_ 0x60 = pure DW_OP_reg16
+          getDW_OP_ 0x61 = pure DW_OP_reg17
+          getDW_OP_ 0x62 = pure DW_OP_reg18
+          getDW_OP_ 0x63 = pure DW_OP_reg19
+          getDW_OP_ 0x64 = pure DW_OP_reg20
+          getDW_OP_ 0x65 = pure DW_OP_reg21
+          getDW_OP_ 0x66 = pure DW_OP_reg22
+          getDW_OP_ 0x67 = pure DW_OP_reg23
+          getDW_OP_ 0x68 = pure DW_OP_reg24
+          getDW_OP_ 0x69 = pure DW_OP_reg25
+          getDW_OP_ 0x6a = pure DW_OP_reg26
+          getDW_OP_ 0x6b = pure DW_OP_reg27
+          getDW_OP_ 0x6c = pure DW_OP_reg28
+          getDW_OP_ 0x6d = pure DW_OP_reg29
+          getDW_OP_ 0x6e = pure DW_OP_reg30
+          getDW_OP_ 0x6f = pure DW_OP_reg31
+          getDW_OP_ 0x70 = pure DW_OP_breg0  <*> getSLEB128
+          getDW_OP_ 0x71 = pure DW_OP_breg1  <*> getSLEB128
+          getDW_OP_ 0x72 = pure DW_OP_breg2  <*> getSLEB128
+          getDW_OP_ 0x73 = pure DW_OP_breg3  <*> getSLEB128
+          getDW_OP_ 0x74 = pure DW_OP_breg4  <*> getSLEB128
+          getDW_OP_ 0x75 = pure DW_OP_breg5  <*> getSLEB128
+          getDW_OP_ 0x76 = pure DW_OP_breg6  <*> getSLEB128
+          getDW_OP_ 0x77 = pure DW_OP_breg7  <*> getSLEB128
+          getDW_OP_ 0x78 = pure DW_OP_breg8  <*> getSLEB128
+          getDW_OP_ 0x79 = pure DW_OP_breg9  <*> getSLEB128
+          getDW_OP_ 0x7a = pure DW_OP_breg10 <*> getSLEB128
+          getDW_OP_ 0x7b = pure DW_OP_breg11 <*> getSLEB128
+          getDW_OP_ 0x7c = pure DW_OP_breg12 <*> getSLEB128
+          getDW_OP_ 0x7d = pure DW_OP_breg13 <*> getSLEB128
+          getDW_OP_ 0x7e = pure DW_OP_breg14 <*> getSLEB128
+          getDW_OP_ 0x7f = pure DW_OP_breg15 <*> getSLEB128
+          getDW_OP_ 0x80 = pure DW_OP_breg16 <*> getSLEB128
+          getDW_OP_ 0x81 = pure DW_OP_breg17 <*> getSLEB128
+          getDW_OP_ 0x82 = pure DW_OP_breg18 <*> getSLEB128
+          getDW_OP_ 0x83 = pure DW_OP_breg19 <*> getSLEB128
+          getDW_OP_ 0x84 = pure DW_OP_breg20 <*> getSLEB128
+          getDW_OP_ 0x85 = pure DW_OP_breg21 <*> getSLEB128
+          getDW_OP_ 0x86 = pure DW_OP_breg22 <*> getSLEB128
+          getDW_OP_ 0x87 = pure DW_OP_breg23 <*> getSLEB128
+          getDW_OP_ 0x88 = pure DW_OP_breg24 <*> getSLEB128
+          getDW_OP_ 0x89 = pure DW_OP_breg25 <*> getSLEB128
+          getDW_OP_ 0x8a = pure DW_OP_breg26 <*> getSLEB128
+          getDW_OP_ 0x8b = pure DW_OP_breg27 <*> getSLEB128
+          getDW_OP_ 0x8c = pure DW_OP_breg28 <*> getSLEB128
+          getDW_OP_ 0x8d = pure DW_OP_breg29 <*> getSLEB128
+          getDW_OP_ 0x8e = pure DW_OP_breg30 <*> getSLEB128
+          getDW_OP_ 0x8f = pure DW_OP_breg31 <*> getSLEB128
+          getDW_OP_ 0x90 = pure DW_OP_regx   <*> getULEB128
+          getDW_OP_ 0x91 = pure DW_OP_fbreg  <*> getSLEB128
+          getDW_OP_ 0x92 = pure DW_OP_bregx  <*> getULEB128 <*> getSLEB128
+          getDW_OP_ 0x93 = pure DW_OP_piece  <*> getULEB128
+          getDW_OP_ 0x94 = pure DW_OP_deref_size <*> getWord8
+          getDW_OP_ 0x95 = pure DW_OP_xderef_size <*> getWord8
+          getDW_OP_ 0x96 = pure DW_OP_nop
+          getDW_OP_ 0x97 = pure DW_OP_push_object_address
+          getDW_OP_ 0x98 = pure DW_OP_call2 <*> getWord16 dr
+          getDW_OP_ 0x99 = pure DW_OP_call4 <*> getWord32 dr
+          getDW_OP_ 0x9a = pure DW_OP_call_ref <*> getDwarfTargetAddress dr
+          getDW_OP_ 0x9b = pure DW_OP_form_tls_address
+          getDW_OP_ 0x9c = pure DW_OP_call_frame_cfa
+          getDW_OP_ 0x9d = pure DW_OP_bit_piece <*> getULEB128 <*> getULEB128
           getDW_OP_ n | 0xe0 <= n && n <= 0xff = fail $ "User DW_OP data requires extension of parser for code " ++ show n
           getDW_OP_ n = fail $ "Unrecognized DW_OP code " ++ show n
 
@@ -1483,11 +1485,11 @@ dw_vis 0x03 = DW_VIS_qualified
 data DW_VIRTUALITY
     = DW_VIRTUALITY_none
     | DW_VIRTUALITY_virtual
-    | DW_VIRTUALITY_pure_virtual
+    | DW_VIRTUALITY_return_virtual
     deriving (Show, Eq)
 dw_virtuality 0x00 = DW_VIRTUALITY_none
 dw_virtuality 0x01 = DW_VIRTUALITY_virtual
-dw_virtuality 0x02 = DW_VIRTUALITY_pure_virtual
+dw_virtuality 0x02 = DW_VIRTUALITY_return_virtual
 
 data DW_LANG
     = DW_LANG_C89
@@ -1576,4 +1578,3 @@ data DW_DSC
     deriving (Show, Eq)
 dw_dsc 0x00 = DW_DSC_label
 dw_dsc 0x01 = DW_DSC_range
-
