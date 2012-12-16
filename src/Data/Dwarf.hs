@@ -310,26 +310,26 @@ data DW_ATVAL
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 getForm :: DwarfReader -> B.ByteString -> Word64 -> DW_FORM -> Get DW_ATVAL
 getForm dr str cu form = case form of
-  DW_FORM_addr      -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetDwarfTargetAddress dr
+  DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetDwarfTargetAddress dr
   DW_FORM_block1    -> DW_ATVAL_BLOB <$> (fromIntegral <$> getWord8        >>= getByteString)
   DW_FORM_block2    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetW16 dr  >>= getByteString)
   DW_FORM_block4    -> DW_ATVAL_BLOB <$> (fromIntegral <$> drGetW32 dr  >>= getByteString)
   DW_FORM_block     -> DW_ATVAL_BLOB <$> (fromIntegral <$> getULEB128      >>= getByteString)
-  DW_FORM_data1     -> pure (DW_ATVAL_UINT . fromIntegral) <*> getWord8
-  DW_FORM_data2     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetW16 dr
-  DW_FORM_data4     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetW32 dr
-  DW_FORM_data8     -> pure (DW_ATVAL_UINT . fromIntegral) <*> drGetW64 dr
-  DW_FORM_udata     -> pure DW_ATVAL_UINT <*> getULEB128
-  DW_FORM_sdata     -> pure DW_ATVAL_INT <*> getSLEB128
-  DW_FORM_flag      -> pure (DW_ATVAL_BOOL . (/= 0)) <*> getWord8
-  DW_FORM_string    -> pure DW_ATVAL_STRING <*> getNullTerminatedString
-  DW_FORM_ref1      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getWord8
-  DW_FORM_ref2      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetW16 dr
-  DW_FORM_ref4      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetW32 dr
-  DW_FORM_ref8      -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> drGetW64 dr
-  DW_FORM_ref_udata -> pure (DW_ATVAL_UINT . (+) cu) <*> fromIntegral <$> getULEB128
-  DW_FORM_ref_addr  -> pure DW_ATVAL_UINT <*> drGetDwarfOffset dr
-  DW_FORM_indirect  -> getULEB128 >>= getForm dr str cu . dw_form
+  DW_FORM_data1     -> DW_ATVAL_UINT . fromIntegral <$> getWord8
+  DW_FORM_data2     -> DW_ATVAL_UINT . fromIntegral <$> drGetW16 dr
+  DW_FORM_data4     -> DW_ATVAL_UINT . fromIntegral <$> drGetW32 dr
+  DW_FORM_data8     -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
+  DW_FORM_udata     -> DW_ATVAL_UINT <$> getULEB128
+  DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
+  DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
+  DW_FORM_string    -> DW_ATVAL_STRING <$> getNullTerminatedString
+  DW_FORM_ref1      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> getWord8
+  DW_FORM_ref2      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> drGetW16 dr
+  DW_FORM_ref4      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> drGetW32 dr
+  DW_FORM_ref8      -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> drGetW64 dr
+  DW_FORM_ref_udata -> DW_ATVAL_UINT . (+) cu <$> fromIntegral <$> getULEB128
+  DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetDwarfOffset dr
+  DW_FORM_indirect  -> getForm dr str cu . dw_form =<< getULEB128
   DW_FORM_strp      -> do
     offset <- fromIntegral <$> drGetDwarfOffset dr
     pure $ DW_ATVAL_STRING $ runGet getNullTerminatedString (L.fromChunks [B.drop offset str])
