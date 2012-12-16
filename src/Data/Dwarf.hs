@@ -49,14 +49,17 @@ module Data.Dwarf ( parseDwarfInfo
                   ) where
 
 import Control.Applicative (Applicative(..), (<$>))
-import Control.Arrow ((***))
+import Control.Arrow ((&&&), (***))
+import Control.Lens (SimpleLensLike)
 import Control.Monad (replicateM)
 import Data.Binary (Binary(..), getWord8)
 import Data.Binary.Get (getByteString, getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get, runGet)
 import Data.Bits (Bits, (.&.), (.|.), shiftL, shiftR, clearBit, testBit)
 import Data.Char (chr)
 import Data.Int (Int8, Int16, Int32, Int64)
+import Data.Maybe (listToMaybe)
 import Data.Word (Word8, Word16, Word32, Word64)
+import qualified Control.Lens as Lens
 import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
@@ -338,42 +341,60 @@ getDieTree parent lsibling abbrev_map dr str_section cu_offset = do
             has_children   = abbrevChildren abbrev
             (attrs, forms) = unzip $ abbrevAttrForms abbrev
         values    <- mapM (getForm dr str_section cu_offset) forms
-        ancestors <- if has_children then getDieTree (Just offset) Nothing abbrev_map dr str_section cu_offset else pure []
+        descendants <-
+          if has_children
+          then getDieTree (Just offset) Nothing abbrev_map dr str_section cu_offset
+          else pure []
         siblings  <- getDieTree parent (Just offset) abbrev_map dr str_section cu_offset
-        let children = map dieId $ filter (maybe False (== offset) . dieParent) ancestors
+        let children = map dieId $ filter (maybe False (== offset) . dieParent) descendants
             rsibling = if null siblings then Nothing else Just $ dieId $ head siblings
-        pure $ (DIE offset parent children lsibling rsibling tag (zip attrs values) dr : ancestors) ++ siblings
+        pure $ (DIE offset parent children lsibling rsibling tag (zip attrs values) dr : descendants) ++ siblings
 
+-- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
-getDieCus :: Maybe Word64 -> DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIE]
-getDieCus cu_lsibling odr abbrev_section str_section = do
-    empty <- Get.isEmpty
-    if empty then
-        pure []
-     else do
-        cu_offset       <- fromIntegral <$> Get.bytesRead
-        (desr, _) <- getDwarfUnitLength odr
-        _version        <- desrGetW16 desr
-        abbrev_offset   <- desrGetDwarfOffset desr
-        addr_size       <- getWord8
-        dr              <- case addr_size of
-                            4 -> pure $ dwarfReader TargetSize32 desr
-                            8 -> pure $ dwarfReader TargetSize64 desr
-                            _ -> fail $ "Invalid address size: " ++ show addr_size
-        cu_die_offset   <- fromIntegral <$> Get.bytesRead
-        cu_abbr_num     <- getULEB128
-        let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
-            abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
-            cu_abbrev            = abbrev_map M.! cu_abbr_num
-            cu_tag               = abbrevTag cu_abbrev
-            cu_has_children      = abbrevChildren cu_abbrev
-            (cu_attrs, cu_forms) = unzip $ abbrevAttrForms cu_abbrev
-        cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
-        cu_ancestors <- if cu_has_children then getDieTree (Just cu_die_offset) Nothing abbrev_map dr str_section cu_offset else pure []
-        cu_siblings  <- getDieCus Nothing odr abbrev_section str_section
-        let cu_children = map dieId $ filter (maybe False (== cu_die_offset) . dieParent) cu_ancestors
-            cu_rsibling = if null cu_siblings then Nothing else Just $ dieId $ head cu_siblings
-        pure $ (DIE cu_die_offset Nothing cu_children cu_lsibling cu_rsibling cu_tag (zip cu_attrs cu_values) dr : cu_ancestors) ++ cu_siblings
+getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIE]
+getDieCus odr abbrev_section str_section =
+  fmap (concatMap (uncurry (:)) . addSiblings Lens._1) .
+  getWhileNotEmpty $ do
+    cu_offset       <- fromIntegral <$> Get.bytesRead
+    (desr, _)       <- getDwarfUnitLength odr
+    _version        <- desrGetW16 desr
+    abbrev_offset   <- desrGetDwarfOffset desr
+    addr_size       <- getWord8
+    dr              <- case addr_size of
+                        4 -> pure $ dwarfReader TargetSize32 desr
+                        8 -> pure $ dwarfReader TargetSize64 desr
+                        _ -> fail $ "Invalid address size: " ++ show addr_size
+    cu_die_offset   <- fromIntegral <$> Get.bytesRead
+    cu_abbr_num     <- getULEB128
+    let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
+        abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
+        cu_abbrev            = abbrev_map M.! cu_abbr_num
+        cu_tag               = abbrevTag cu_abbrev
+        cu_has_children      = abbrevChildren cu_abbrev
+        (cu_attrs, cu_forms) = unzip $ abbrevAttrForms cu_abbrev
+    cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
+    cu_descendants <-
+      if cu_has_children
+      then getDieTree (Just cu_die_offset) Nothing abbrev_map dr str_section cu_offset
+      else pure []
+           -- TODO: YUCK!
+    let cu_children = map dieId $ filter (maybe False (== cu_die_offset) . dieParent) cu_descendants
+    pure
+      ( DIE cu_die_offset Nothing cu_children Nothing Nothing cu_tag (zip cu_attrs cu_values) dr
+      , cu_descendants )
+
+addSiblings :: SimpleLensLike (Lens.Context DIE DIE) a DIE -> [a] -> [a]
+addSiblings lens = go Nothing
+  where
+    go _lSibling [] = []
+    go lSibling (x:xs) =
+      Lens.over (Lens.cloneLens lens) (modifyRecord lSibling (getId <$> listToMaybe xs)) x
+      : go (Just (getId x)) xs
+    getId = dieId . Lens.view (Lens.cloneLens lens)
+    modifyRecord l r x =
+      x { dieSiblingLeft = l
+        , dieSiblingRight = r }
 
 -- | Returns compilation unit id given the header offset into .debug_info
 infoCompileUnit  :: B.ByteString -- ^ Contents of .debug_info
@@ -393,8 +414,8 @@ parseDwarfInfo :: Endianess
                -> M.Map Word64 DIE -- ^ A map from the unique ids to their corresponding DWARF information entries.
 parseDwarfInfo endianess info_section abbrev_section str_section =
     let dr = dwarfEndianReader endianess
-        di = runGet (getDieCus Nothing dr abbrev_section str_section) $ L.fromChunks [info_section]
-    in M.fromList $ zip (map dieId di) di
+        di = runGet (getDieCus dr abbrev_section str_section) $ L.fromChunks [info_section]
+    in M.fromList $ map (dieId &&& id) di
 
 -- Section 7.19 - Name Lookup Tables
 getNameLookupEntries :: DwarfReader -> Word64 -> Get [(String, [Word64])]
