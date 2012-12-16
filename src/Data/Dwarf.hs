@@ -87,6 +87,15 @@ whileMInclusive cond act = go
         then go
         else pure []
 
+getWhileNotEmpty :: Get a -> Get [a]
+getWhileNotEmpty act = go
+  where
+    go = do
+      empty <- Get.isEmpty
+      if empty
+        then pure []
+        else (:) <$> act <*> go
+
 -- Decode a NULL-terminated UTF-8 string.
 getNullTerminatedString :: Get String
 -- getNullTerminatedString = C.unpack . B.pack <$> whileM (/= 0) getWord8
@@ -729,15 +738,6 @@ data DW_CIEFDE
         , fdeInstructions    :: [DW_CFA]
         }
     deriving (Show, Eq)
-
-getWhileNotEmpty :: Get a -> Get [a]
-getWhileNotEmpty act = go
-  where
-    go = do
-      empty <- Get.isEmpty
-      if empty
-        then pure []
-        else (:) <$> act <*> go
 
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
