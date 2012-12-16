@@ -57,7 +57,6 @@ import Control.Monad (replicateM)
 import Data.Binary (Binary(..), getWord8)
 import Data.Binary.Get (getByteString, getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get, runGet)
 import Data.Bits (Bits, (.&.), (.|.), shiftL, shiftR, clearBit, testBit)
-import Data.Char (chr)
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Maybe (listToMaybe)
 import Data.Word (Word8, Word16, Word32, Word64)
@@ -65,6 +64,7 @@ import qualified Control.Lens as Lens
 import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.UTF8 as UTF8
 import qualified Data.Map as M
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -101,39 +101,8 @@ getWhileNotEmpty act = go
         then pure []
         else (:) <$> act <*> go
 
--- Decode a NULL-terminated UTF-8 string.
-getNullTerminatedString :: Get String
--- getNullTerminatedString = C.unpack . B.pack <$> whileM (/= 0) getWord8
-getNullTerminatedString = map (chr . fromIntegral) <$> whileM (/= 0) getCharUTF8
-    where getCharUTF8 = do
-            let getCharUTF82 b1 = do
-                    b2 <- fromIntegral <$> getWord8 :: Get Word32
-                    if b2 .&. 0xc0 == 0x80 then
-                            pure $ ((b1 .&. 0x1f) `shiftL` 6) .|. (b2 .&. 0x3f)
-                         else
-                            fail "Invalid second byte in UTf8 string."
-                getCharUTF83 b1 = do
-                    b2 <- fromIntegral <$> getWord8 :: Get Word32
-                    b3 <- fromIntegral <$> getWord8 :: Get Word32
-                    if b2 .&. 0xc0 == 0x80 && b3 .&. 0xc0 == 0x80 then
-                            pure $ ((b1 .&. 0x0f) `shiftL` 12) .|. ((b2 .&. 0x3f) `shiftL` 6) .|. (b3 .&. 0x3f)
-                         else
-                            fail "Invalid second or third byte in UTf8 string."
-                getCharUTF84 b1 = do
-                    b2 <- fromIntegral <$> getWord8 :: Get Word32
-                    b3 <- fromIntegral <$> getWord8 :: Get Word32
-                    b4 <- fromIntegral <$> getWord8 :: Get Word32
-                    if b2 .&. 0xc0 == 0x80 && b3 .&. 0xc0 == 0x80 && b4 .&. 0xc0 == 0x80 then
-                            pure $ ((b1 .&. 0x07) `shiftL` 18) .|. ((b2 .&. 0x3f) `shiftL` 12) .|. ((b3 .&. 0x3f) `shiftL` 6) .|. (b4 .&. 0x3f)
-                         else
-                            fail "Invalid second or third byte in UTf8 string."
-            b1 <- fromIntegral <$> getWord8 :: Get Word32
-            case b1 of
-                n | n .&. 0x80 == 0x00 -> pure $ fromIntegral n
-                n | n .&. 0xe0 == 0xc0 -> getCharUTF82 n
-                n | n .&. 0xf0 == 0xe0 -> getCharUTF83 n
-                n | n .&. 0xf8 == 0xf0 -> getCharUTF84 n
-                _                      -> fail "Invalid first byte in UTF8 string."
+getNullTerminatedUTF8String :: Get String
+getNullTerminatedUTF8String = UTF8.toString . B.pack <$> whileM (/= 0) getWord8
 
 -- Decode a signed little-endian base 128 encoded integer.
 getSLEB128 :: Get Int64
@@ -326,7 +295,7 @@ getForm dr str cu form = case form of
   DW_FORM_udata     -> DW_ATVAL_UINT <$> getULEB128
   DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
   DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
-  DW_FORM_string    -> DW_ATVAL_STRING <$> getNullTerminatedString
+  DW_FORM_string    -> DW_ATVAL_STRING <$> getNullTerminatedUTF8String
   DW_FORM_ref1      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> getWord8
   DW_FORM_ref2      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW16 dr
   DW_FORM_ref4      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW32 dr
@@ -337,7 +306,7 @@ getForm dr str cu form = case form of
   DW_FORM_strp      -> do
     offset <- fromIntegral <$> drGetDwarfOffset dr
     pure . DW_ATVAL_STRING .
-      runGet getNullTerminatedString $ L.fromChunks [B.drop offset str]
+      runGet getNullTerminatedUTF8String $ L.fromChunks [B.drop offset str]
 
 data DW_AT
     = DW_AT_sibling              -- ^ reference
@@ -652,7 +621,7 @@ getNameLookupEntries dr cu_offset = do
     if die_offset == 0 then
         pure []
      else do
-        name <- getNullTerminatedString
+        name <- getNullTerminatedUTF8String
         rest <- getNameLookupEntries dr cu_offset
         pure $ (name, [cu_offset + die_offset]) : rest
 
@@ -730,7 +699,7 @@ getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromI
                 where getDW_LNE = getWord8 >>= getDW_LNE_
                       getDW_LNE_ 0x01 = pure DW_LNE_end_sequence
                       getDW_LNE_ 0x02 = pure DW_LNE_set_address <*> drGetDwarfTargetAddress dr
-                      getDW_LNE_ 0x03 = pure DW_LNE_define_file <*> getNullTerminatedString <*> getULEB128 <*> getULEB128 <*> getULEB128
+                      getDW_LNE_ 0x03 = pure DW_LNE_define_file <*> getNullTerminatedUTF8String <*> getULEB128 <*> getULEB128 <*> getULEB128
                       getDW_LNE_ n | 0x80 <= n && n <= 0xff = fail $ "User DW_LNE data requires extension of parser for code " ++ show n
                       getDW_LNE_ n = fail $ "Unexpected DW_LNE code " ++ show n
           getDW_LNI_ 0x01 = pure DW_LNS_copy
@@ -834,7 +803,7 @@ defaultLNE is_stmt files = DW_LNE
     }
 getDebugLineFileNames :: Get [(String, Word64, Word64, Word64)]
 getDebugLineFileNames = do
-    file_name <- getNullTerminatedString
+    file_name <- getNullTerminatedUTF8String
     if file_name == [] then
         pure []
      else do
@@ -862,7 +831,7 @@ getDwarfLine target64 der = do
     line_range                 <- getWord8
     opcode_base                <- getWord8
     _standard_opcode_lengths   <- replicateM (fromIntegral opcode_base - 1) getWord8
-    _include_directories       <- whileM (/= "") getNullTerminatedString
+    _include_directories       <- whileM (/= "") getNullTerminatedUTF8String
     file_names                 <- getDebugLineFileNames
     endLen <- Get.bytesRead
     -- Check if we have reached the end of the section.
@@ -897,11 +866,11 @@ getDwarfMacInfo = do
     x <- getWord8
     case x of
         0x00 -> pure []
-        0x01 -> pure (:) <*> (pure DW_MACINFO_define     <*> getULEB128 <*> getNullTerminatedString) <*> getDwarfMacInfo
-        0x02 -> pure (:) <*> (pure DW_MACINFO_undef      <*> getULEB128 <*> getNullTerminatedString) <*> getDwarfMacInfo
+        0x01 -> pure (:) <*> (pure DW_MACINFO_define     <*> getULEB128 <*> getNullTerminatedUTF8String) <*> getDwarfMacInfo
+        0x02 -> pure (:) <*> (pure DW_MACINFO_undef      <*> getULEB128 <*> getNullTerminatedUTF8String) <*> getDwarfMacInfo
         0x03 -> pure (:) <*> (pure DW_MACINFO_start_file <*> getULEB128 <*> getULEB128)              <*> getDwarfMacInfo
         0x04 -> pure (:) <*>  pure DW_MACINFO_end_file                                               <*> getDwarfMacInfo
-        0xff -> pure (:) <*> (pure DW_MACINFO_vendor_ext <*> getULEB128 <*> getNullTerminatedString) <*> getDwarfMacInfo
+        0xff -> pure (:) <*> (pure DW_MACINFO_vendor_ext <*> getULEB128 <*> getNullTerminatedUTF8String) <*> getDwarfMacInfo
         _ -> fail $ "Invalid MACINFO id: " ++ show x
 
 -- Section 7.22 - Call Frame
@@ -992,7 +961,7 @@ getCIEFDE endianess target64 = do
     cie_id     <- drGetDwarfOffset dr
     if cie_id == drLargestOffset dr then do
         version                 <- getWord8
-        augmentation            <- getNullTerminatedString
+        augmentation            <- getNullTerminatedUTF8String
         code_alignment_factor   <- getULEB128
         data_alignment_factor   <- getSLEB128
         return_address_register <- case version of

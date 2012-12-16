@@ -15,7 +15,7 @@ Description:   Parser for DWARF debug format.
 Data-Files:    tests/Test.hs
 
 library
-    build-depends:   base >= 2 && < 5, bytestring, containers, binary, lens >= 3.7
+    build-depends:   base >= 2 && < 5, bytestring, containers, binary, lens >= 3.7, utf8-string >= 0.3.7
     hs-source-dirs:  src
     exposed-modules: Data.Dwarf
     ghc-options:     -Wall
