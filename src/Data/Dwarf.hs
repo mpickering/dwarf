@@ -299,6 +299,11 @@ getAbbrevList =
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- DWARF information entry and .debug_info section parsing.
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-- TODO: Do we really want to maintain the siblings? We could go to
+-- parent->children? or even always keep the parens in context and not
+-- maintain that either?
+
 -- | The dwarf information entries form a graph of nodes tagged with attributes. Please refer to the DWARF specification
 -- for semantics. Although it looks like a tree, there can be attributes which have adjacency information which will
 -- introduce cross-branch edges.
