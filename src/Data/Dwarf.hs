@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, GeneralizedNewtypeDeriving #-}
 -- | Parses the DWARF 2 and DWARF 3 specifications at http://www.dwarfstd.org given
 -- the debug sections in ByteString form.
 module Data.Dwarf ( parseDwarfInfo
@@ -275,10 +275,16 @@ getByteStringLen :: Integral a => Get a -> Get B.ByteString
 getByteStringLen lenGetter =
   getByteString =<< fromIntegral <$> lenGetter
 
+newtype CUOffset = CUOffset Word64
+  deriving (Eq, Ord, Read, Show)
+
+inCU :: Integral a => CUOffset -> a -> Word64
+inCU (CUOffset base) x = base + fromIntegral x
+
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-getForm :: DwarfReader -> B.ByteString -> Word64 -> DW_FORM -> Get DW_ATVAL
+getForm :: DwarfReader -> B.ByteString -> CUOffset -> DW_FORM -> Get DW_ATVAL
 getForm dr str cu form = case form of
   DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetDwarfTargetAddress dr
   DW_FORM_block1    -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
@@ -293,11 +299,11 @@ getForm dr str cu form = case form of
   DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
   DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
   DW_FORM_string    -> DW_ATVAL_STRING <$> getNullTerminatedUTF8String
-  DW_FORM_ref1      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> getWord8
-  DW_FORM_ref2      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW16 dr
-  DW_FORM_ref4      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW32 dr
-  DW_FORM_ref8      -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> drGetW64 dr
-  DW_FORM_ref_udata -> DW_ATVAL_UINT . (cu +) . fromIntegral <$> getULEB128
+  DW_FORM_ref1      -> DW_ATVAL_UINT . inCU cu <$> getWord8
+  DW_FORM_ref2      -> DW_ATVAL_UINT . inCU cu <$> drGetW16 dr
+  DW_FORM_ref4      -> DW_ATVAL_UINT . inCU cu <$> drGetW32 dr
+  DW_FORM_ref8      -> DW_ATVAL_UINT . inCU cu <$> drGetW64 dr
+  DW_FORM_ref_udata -> DW_ATVAL_UINT . inCU cu <$> getULEB128
   DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetDwarfOffset dr
   DW_FORM_indirect  -> getForm dr str cu . dw_form =<< getULEB128
   DW_FORM_strp      -> do
@@ -600,6 +606,7 @@ infoCompileUnit infoSection offset =
     _ -> offset + 11
 
 -- Section 7.19 - Name Lookup Tables
+-- TODO: Is this Word64 really a CU? It's being passed as a "debug_info_offset"
 getNameLookupEntries :: DwarfReader -> Word64 -> Get [(String, [Word64])]
 getNameLookupEntries dr cu_offset = do
     die_offset <- drGetDwarfOffset dr
@@ -1119,7 +1126,7 @@ concatSiblings mParent diesAndDescendants =
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
 getDieAndSiblings ::
   DieID -> M.Map AbbrevId DW_ABBREV -> DwarfReader ->
-  B.ByteString -> Word64 -> Get [DIETree]
+  B.ByteString -> CUOffset -> Get [DIETree]
 getDieAndSiblings parent abbrev_map dr str_section cu_offset =
   concatSiblings (Just parent) <$> go
   where
@@ -1135,7 +1142,7 @@ getDieAndSiblings parent abbrev_map dr str_section cu_offset =
           siblings <- go
           pure $ dieDescendants : siblings
 
-getDIEAndDescendants :: DieID -> DW_ABBREV -> M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [DIETree])
+getDIEAndDescendants :: DieID -> DW_ABBREV -> M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> CUOffset -> Get (DIE, [DIETree])
 getDIEAndDescendants offset abbrev abbrev_map dr str_section cu_offset = do
   values    <- mapM (getForm dr str_section cu_offset) forms
   descendants <-
@@ -1154,7 +1161,7 @@ getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIETree]
 getDieCus odr abbrev_section str_section =
   fmap (concatSiblings Nothing) .
   getWhileNotEmpty $ do
-    cu_offset       <- fromIntegral <$> Get.bytesRead
+    cu_offset       <- CUOffset . fromIntegral <$> Get.bytesRead
     (desr, _)       <- getDwarfUnitLength odr
     _version        <- desrGetW16 desr
     abbrev_offset   <- desrGetDwarfOffset desr
