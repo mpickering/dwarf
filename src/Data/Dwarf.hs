@@ -1138,30 +1138,27 @@ getDieAndSiblings ::
 getDieAndSiblings parent abbrev_map dr str_section cu_offset =
   concatSiblings (Just parent) <$> go
   where
-    go = do
-      -- TODO: Move this including the "if" to getDIEAndDescendants,
-      -- and have it return a Maybe
-      offset <- DieID . fromIntegral <$> Get.bytesRead
-      mAbbrid <- getMAbbrevId
-      case mAbbrid of
-        Nothing -> pure []
-        Just abbrid -> do
-          dieDescendants <- getDIEAndDescendants offset (abbrev_map M.! abbrid) abbrev_map dr str_section cu_offset
-          siblings <- go
-          pure $ dieDescendants : siblings
+    go =
+      whileJust $
+      getDIEAndDescendants abbrev_map dr str_section cu_offset =<<
+      DieID . fromIntegral <$> Get.bytesRead
 
-getDIEAndDescendants :: DieID -> DW_ABBREV -> M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> CUOffset -> Get (DIE, [DIETree])
-getDIEAndDescendants offset abbrev abbrev_map dr str_section cu_offset = do
-  values    <- mapM (getForm dr str_section cu_offset) forms
-  descendants <-
-    if abbrevChildren abbrev
-    then getDieAndSiblings offset abbrev_map dr str_section cu_offset
-    else pure []
-  pure $
-    (DIE offset tag (zip attrs values) dr, descendants)
+getDIEAndDescendants :: M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> CUOffset -> DieID -> Get (Maybe (DIE, [DIETree]))
+getDIEAndDescendants abbrev_map dr str_section cu_offset offset =
+  traverse go =<< getMAbbrevId
   where
-    tag            = abbrevTag abbrev
-    (attrs, forms) = unzip $ abbrevAttrForms abbrev
+    go abbrid = do
+      let
+        abbrev         = abbrev_map M.! abbrid
+        tag            = abbrevTag abbrev
+        (attrs, forms) = unzip $ abbrevAttrForms abbrev
+      values          <- mapM (getForm dr str_section cu_offset) forms
+      descendants <-
+        if abbrevChildren abbrev
+        then getDieAndSiblings offset abbrev_map dr str_section cu_offset
+        else pure []
+      pure $
+        (DIE offset tag (zip attrs values) dr, descendants)
 
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
