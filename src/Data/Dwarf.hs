@@ -128,6 +128,8 @@ getULEB128 =
 data Endianess = LittleEndian | BigEndian
   deriving (Eq, Ord, Read, Show)
 
+most/all bytesRead are wrong because we are going to use B.drop and localized get
+
 -- Decode the DWARF size header entry, which specifies both the size of a DWARF subsection and whether this section uses DWARF32 or DWARF64.
 getDwarfUnitLength :: DwarfEndianReader -> Get (DwarfEndianSizeReader, Word64)
 getDwarfUnitLength der = do
