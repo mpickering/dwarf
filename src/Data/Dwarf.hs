@@ -25,7 +25,7 @@ module Data.Dwarf ( parseDwarfInfo
                   , dw_dsc
                   , (!?)
                   , DwarfReader(..)
-                  , Tree(..), DIE(..)
+                  , Tree(..), DIE(..), DieID
                   , DW_CFA(..)
                   , DW_MACINFO(..)
                   , DW_CIEFDE(..)
@@ -1063,50 +1063,57 @@ data DW_TAG
 -- parent->children? or even always keep the parens in context and not
 -- maintain that either?
 
-data Tree a = Tree
-  { treeParent       :: Maybe Word64        -- ^ Unique identifier of this entry's parent.
-  , treeSiblingLeft  :: Maybe Word64        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
-  , treeSiblingRight :: Maybe Word64        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
+data Tree ptr a = Tree
+  { treeParent       :: Maybe ptr        -- ^ Unique identifier of this entry's parent.
+  , treeSiblingLeft  :: Maybe ptr        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
+  , treeSiblingRight :: Maybe ptr        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
   , treeData :: a
   }
 
-instance Show a => Show (Tree a) where
+instance Show a => Show (Tree ptr a) where
   show tree = show (treeData tree)
+
+newtype DieID = DieID Word64
+  deriving (Eq, Ord, Read, Show)
 
 -- | The dwarf information entries form a graph of nodes tagged with attributes. Please refer to the DWARF specification
 -- for semantics. Although it looks like a tree, there can be attributes which have adjacency information which will
 -- introduce cross-branch edges.
 data DIE = DIE
-    { dieId           :: Word64              -- ^ Unique identifier for this entry.
+    { dieId           :: DieID              -- ^ Unique identifier for this entry.
     , dieTag          :: DW_TAG              -- ^ Type tag.
     , dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
     , dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     } deriving (Show, Eq)
 
-addSiblings :: Maybe Word64 -> [(Word64, a)] -> [Tree a]
+type DIETree = Tree DieID DIE
+
+addSiblings :: Maybe DieID -> [DIE] -> [DIETree]
 addSiblings mParent = go Nothing
   where
     go _lSibling [] = []
-    go lSibling ((i, x) : xs) =
-      Tree mParent lSibling (fst <$> listToMaybe xs) x :
-      go (Just i) xs
+    go lSibling (die : xs) =
+      Tree mParent lSibling (dieId <$> listToMaybe xs) die :
+      go (Just (dieId die)) xs
 
-concatSiblings :: Maybe Word64 -> [(DIE, [Tree DIE])] -> [Tree DIE]
+concatSiblings :: Maybe DieID -> [(DIE, [DIETree])] -> [DIETree]
 concatSiblings mParent diesAndDescendants =
-  addSiblings mParent (map (dieId &&& id) dies) ++ descendants
+  addSiblings mParent dies ++ descendants
   where
     dies = map fst diesAndDescendants
     descendants = concatMap snd diesAndDescendants
 
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
 getDieAndSiblings ::
-  Word64 -> M.Map Word64 DW_ABBREV -> DwarfReader ->
-  B.ByteString -> Word64 -> Get [Tree DIE]
+  DieID -> M.Map Word64 DW_ABBREV -> DwarfReader ->
+  B.ByteString -> Word64 -> Get [DIETree]
 getDieAndSiblings parent abbrev_map dr str_section cu_offset =
   concatSiblings (Just parent) <$> go
   where
     go = do
-      offset <- fromIntegral <$> Get.bytesRead
+      -- TODO: Move this including the "if" to getDIEAndDescendants,
+      -- and have it return a Maybe
+      offset <- DieID . fromIntegral <$> Get.bytesRead
       abbrid <- getULEB128
       if abbrid == 0
         then pure []
@@ -1115,7 +1122,7 @@ getDieAndSiblings parent abbrev_map dr str_section cu_offset =
           siblings <- go
           pure $ dieDescendants : siblings
 
-getDIEAndDescendants :: Word64 -> DW_ABBREV -> M.Map Word64 DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [Tree DIE])
+getDIEAndDescendants :: DieID -> DW_ABBREV -> M.Map Word64 DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [DIETree])
 getDIEAndDescendants offset abbrev abbrev_map dr str_section cu_offset = do
   values    <- mapM (getForm dr str_section cu_offset) forms
   descendants <-
@@ -1130,7 +1137,7 @@ getDIEAndDescendants offset abbrev abbrev_map dr str_section cu_offset = do
 
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
-getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [Tree DIE]
+getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIETree]
 getDieCus odr abbrev_section str_section =
   fmap (concatSiblings Nothing) .
   getWhileNotEmpty $ do
@@ -1143,7 +1150,8 @@ getDieCus odr abbrev_section str_section =
                         4 -> pure $ dwarfReader TargetSize32 desr
                         8 -> pure $ dwarfReader TargetSize64 desr
                         _ -> fail $ "Invalid address size: " ++ show addr_size
-    cudie_offset   <- fromIntegral <$> Get.bytesRead
+    -- TODO: This duplicates getDieAndSiblings
+    cudie_offset   <- DieID . fromIntegral <$> Get.bytesRead
     cu_abbr_num     <- getULEB128
     let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
         abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
@@ -1166,7 +1174,7 @@ parseDwarfInfo :: Endianess
                -> B.ByteString     -- ^ ByteString for the .debug_info section.
                -> B.ByteString     -- ^ ByteString for the .debug_abbrev section.
                -> B.ByteString     -- ^ ByteString for the .debug_str section.
-               -> M.Map Word64 (Tree DIE) -- ^ A map from the unique ids to their corresponding DWARF information entries.
+               -> M.Map DieID DIETree -- ^ A map from the unique ids to their corresponding DWARF information entries.
 parseDwarfInfo endianess info_section abbrev_section str_section =
     let dr = dwarfEndianReader endianess
         di = runGet (getDieCus dr abbrev_section str_section) $ L.fromChunks [info_section]
