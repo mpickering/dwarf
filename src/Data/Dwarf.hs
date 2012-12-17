@@ -1,53 +1,54 @@
 {-# LANGUAGE TemplateHaskell, GeneralizedNewtypeDeriving #-}
 -- | Parses the DWARF 2 and DWARF 3 specifications at http://www.dwarfstd.org given
 -- the debug sections in ByteString form.
-module Data.Dwarf ( parseDwarfInfo
-                  , infoCompileUnit
-                  , parseDwarfAranges
-                  , parseDwarfPubnames
-                  , parseDwarfPubtypes
-                  , parseDwarfMacInfo
-                  , parseDwarfRanges, Range(..)
-                  , parseDwarfLoc
-                  , parseDwarfLine
-                  , parseDwarfFrame
-                  , parseDW_OP
-                  , dw_ate
-                  , dw_ds
-                  , dw_end
-                  , dw_access
-                  , dw_vis
-                  , dw_virtuality
-                  , dw_lang
-                  , dw_inl
-                  , dw_cc
-                  , dw_ord
-                  , dw_dsc
-                  , (!?)
-                  , DwarfReader(..)
-                  , Tree(..), DIE(..), DieID
-                  , DW_CFA(..)
-                  , DW_MACINFO(..)
-                  , DW_CIEFDE(..)
-                  , DW_OP(..)
-                  , DW_TAG(..)
-                  , DW_AT(..)
-                  , DW_ATVAL(..)
-                  , DW_LNE(..)
-                  , DW_ATE(..)
-                  , DW_DS(..)
-                  , DW_END(..)
-                  , DW_ACCESS(..)
-                  , DW_VIS(..)
-                  , DW_VIRTUALITY(..)
-                  , DW_LANG(..)
-                  , DW_ID(..), dw_id
-                  , DW_INL(..)
-                  , DW_CC(..)
-                  , DW_ORD(..)
-                  , DW_DSC(..)
-                  , Endianess(..)
-                  ) where
+module Data.Dwarf
+  ( parseDwarfInfo
+  , infoCompileUnit
+  , parseDwarfAranges
+  , parseDwarfPubnames
+  , parseDwarfPubtypes
+  , parseDwarfMacInfo
+  , parseDwarfRanges, Range(..)
+  , parseDwarfLoc
+  , parseDwarfLine
+  , parseDwarfFrame
+  , parseDW_OP
+  , dw_ate
+  , dw_ds
+  , dw_end
+  , dw_access
+  , dw_vis
+  , dw_virtuality
+  , dw_lang
+  , dw_inl
+  , dw_cc
+  , dw_ord
+  , dw_dsc
+  , (!?)
+  , DwarfReader(..)
+  , Tree(..), DIE(..), DieID
+  , DW_CFA(..)
+  , DW_MACINFO(..)
+  , DW_CIEFDE(..)
+  , DW_OP(..)
+  , DW_TAG(..)
+  , DW_AT(..)
+  , DW_ATVAL(..)
+  , DW_LNE(..)
+  , DW_ATE(..)
+  , DW_DS(..)
+  , DW_END(..)
+  , DW_ACCESS(..)
+  , DW_VIS(..)
+  , DW_VIRTUALITY(..)
+  , DW_LANG(..)
+  , DW_ID(..), dw_id
+  , DW_INL(..)
+  , DW_CC(..)
+  , DW_ORD(..)
+  , DW_DSC(..)
+  , Endianess(..)
+  ) where
 
 import Control.Applicative (Applicative(..), (<$>))
 import Control.Arrow ((&&&), (***))
