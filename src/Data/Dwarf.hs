@@ -156,8 +156,6 @@ dwarfEndianReader BigEndian    = DwarfEndianReader BigEndian    getWord16be getW
 
 instance Show DwarfEndianReader where
   show der = "DwarfEndianReader " ++ show (derEndianess der)
-instance Eq DwarfEndianReader where
-    a1 == a2 = derEndianess a1 == derEndianess a2
 
 data DwarfEncoding = DwarfEncoding32 | DwarfEncoding64
   deriving (Eq, Ord, Read, Show)
@@ -175,8 +173,6 @@ dwarfEndianSizeReader DwarfEncoding32 der = DwarfEndianSizeReader der DwarfEncod
 
 instance Show DwarfEndianSizeReader where
     show desr = "DwarfEndianSizeReader " ++ show (desrEndianReader desr) ++ " " ++ show (desrEncoding desr)
-instance Eq DwarfEndianSizeReader where
-    a1 == a2 = (desrEndianReader a1, desrEncoding a1) == (desrEndianReader a2, desrEncoding a2)
 
 data TargetSize = TargetSize32 | TargetSize64
   deriving (Eq, Ord, Read, Show)
@@ -190,8 +186,6 @@ data DwarfReader = DwarfReader
     }
 instance Show DwarfReader where
     show dr = "DwarfReader " ++ show (drDesr dr) ++ " " ++ show (drTarget64 dr)
-instance Eq DwarfReader where
-    a1 == a2 = (drDesr a1, drTarget64 a1) == (drDesr a2, drTarget64 a2)
 dwarfReader :: TargetSize -> DwarfEndianSizeReader -> DwarfReader
 dwarfReader TargetSize64 desr = DwarfReader desr TargetSize64 0xffffffffffffffff (desrGetW64 desr)
 dwarfReader TargetSize32 desr = DwarfReader desr TargetSize32 0xffffffff         $ fromIntegral <$> desrGetW32 desr
@@ -1113,7 +1107,7 @@ data DIE = DIE
     , dieTag          :: DW_TAG              -- ^ Type tag.
     , dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
     , dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
-    } deriving (Show, Eq)
+    } deriving (Show)
 
 type DIETree = Tree DieID DIE
 
