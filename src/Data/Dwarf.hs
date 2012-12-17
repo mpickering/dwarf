@@ -7,7 +7,7 @@ module Data.Dwarf ( parseDwarfInfo
                   , parseDwarfPubnames
                   , parseDwarfPubtypes
                   , parseDwarfMacInfo
-                  , parseDwarfRanges
+                  , parseDwarfRanges, Range(..)
                   , parseDwarfLoc
                   , parseDwarfLine
                   , parseDwarfFrame
@@ -982,23 +982,28 @@ parseDwarfFrame :: Endianess
 parseDwarfFrame endianess target64 bs =
   runGet (getWhileNotEmpty $ getCIEFDE endianess target64) (L.fromChunks [bs])
 
+data Range = Range
+  { rangeMBegin :: Maybe Word64
+  , rangeEnd :: Word64
+  }
+
 -- Section 7.23 - Non-contiguous Address Ranges
 -- | Retrieves the non-contiguous address ranges for a compilation unit from a given substring of the .debug_ranges section. The offset
 -- into the .debug_ranges section is obtained from the DW_AT_ranges attribute of a compilation unit DIE.
 -- Left results are base address entries. Right results are address ranges.
-parseDwarfRanges :: DwarfReader -> B.ByteString -> [Either Word64 (Word64, Word64)]
-parseDwarfRanges dr bs = runGet (getDwarfRanges dr) (L.fromChunks [bs])
+parseDwarfRanges :: DwarfReader -> B.ByteString -> [Range]
+parseDwarfRanges dr bs = runGet (getDwarfRanges dr) $ L.fromChunks [bs]
 
-getDwarfRanges :: DwarfReader -> Get [Either Word64 (Word64, Word64)]
-getDwarfRanges dr = do
-    begin <- drGetDwarfTargetAddress dr
-    end   <- drGetDwarfTargetAddress dr
-    if begin == 0 && end == 0 then
-        pure []
-     else if begin == drLargestTargetAddress dr then
-        pure (Left end :) <*> getDwarfRanges dr
-     else
-        pure (Right (begin, end) :) <*> getDwarfRanges dr
+getDwarfRanges :: DwarfReader -> Get [Range]
+getDwarfRanges dr = whileMaybe $ do
+  begin <- drGetDwarfTargetAddress dr
+  end   <- drGetDwarfTargetAddress dr
+  if begin == 0 && end == 0
+    then pure Nothing
+    else Just <$>
+      if begin == drLargestTargetAddress dr
+      then pure Range { rangeMBegin = Nothing, rangeEnd = end }
+      else pure Range { rangeMBegin = Just begin, rangeEnd = end }
 
 -- Section 7.7.3
 -- | Retrieves the location list expressions from a given substring of the .debug_loc section. The offset
