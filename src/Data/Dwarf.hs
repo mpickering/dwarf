@@ -94,8 +94,8 @@ getWhileNotEmpty act = whileMaybe $ do
     then pure Nothing
     else Just <$> act
 
-getNullTerminatedUTF8String :: Get String
-getNullTerminatedUTF8String = UTF8.toString . B.pack <$> whileM (/= 0) getWord8
+getUTF8Str0 :: Get String
+getUTF8Str0 = UTF8.toString . B.pack <$> whileM (/= 0) getWord8
 
 -- Decode a signed little-endian base 128 encoded integer.
 getSLEB128 :: Get Int64
@@ -294,7 +294,7 @@ getForm dr str cu form = case form of
   DW_FORM_udata     -> DW_ATVAL_UINT <$> getULEB128
   DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
   DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
-  DW_FORM_string    -> DW_ATVAL_STRING <$> getNullTerminatedUTF8String
+  DW_FORM_string    -> DW_ATVAL_STRING <$> getUTF8Str0
   DW_FORM_ref1      -> DW_ATVAL_UINT . inCU cu <$> getWord8
   DW_FORM_ref2      -> DW_ATVAL_UINT . inCU cu <$> drGetW16 dr
   DW_FORM_ref4      -> DW_ATVAL_UINT . inCU cu <$> drGetW32 dr
@@ -305,7 +305,7 @@ getForm dr str cu form = case form of
   DW_FORM_strp      -> do
     offset <- fromIntegral <$> drGetDwarfOffset dr
     pure . DW_ATVAL_STRING .
-      runGet getNullTerminatedUTF8String $ L.fromChunks [B.drop offset str]
+      runGet getUTF8Str0 $ L.fromChunks [B.drop offset str]
 
 data DW_AT
     = DW_AT_sibling              -- ^ reference
@@ -610,7 +610,7 @@ getNameLookupEntries dr cu_offset =
   whileMaybe $ traverse getEntry =<< getNonZeroDwarfOffset dr
   where
     getEntry die_offset = do
-      name <- getNullTerminatedUTF8String
+      name <- getUTF8Str0
       pure (name, [cu_offset + die_offset])
 
 getDebugInfoOffset :: TargetSize -> DwarfEndianReader -> Get (DwarfReader, Word64)
@@ -689,7 +689,7 @@ getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromI
                 where getDW_LNE = getWord8 >>= getDW_LNE_
                       getDW_LNE_ 0x01 = pure DW_LNE_end_sequence
                       getDW_LNE_ 0x02 = pure DW_LNE_set_address <*> drGetDwarfTargetAddress dr
-                      getDW_LNE_ 0x03 = pure DW_LNE_define_file <*> getNullTerminatedUTF8String <*> getULEB128 <*> getULEB128 <*> getULEB128
+                      getDW_LNE_ 0x03 = pure DW_LNE_define_file <*> getUTF8Str0 <*> getULEB128 <*> getULEB128 <*> getULEB128
                       getDW_LNE_ n | 0x80 <= n && n <= 0xff = fail $ "User DW_LNE data requires extension of parser for code " ++ show n
                       getDW_LNE_ n = fail $ "Unexpected DW_LNE code " ++ show n
           getDW_LNI_ 0x01 = pure DW_LNS_copy
@@ -793,7 +793,7 @@ defaultLNE is_stmt files = DW_LNE
     }
 getDebugLineFileNames :: Get [(String, Word64, Word64, Word64)]
 getDebugLineFileNames = do
-    file_name <- getNullTerminatedUTF8String
+    file_name <- getUTF8Str0
     if file_name == [] then
         pure []
      else do
@@ -821,7 +821,7 @@ getDwarfLine target64 der = do
     line_range                 <- getWord8
     opcode_base                <- getWord8
     _standard_opcode_lengths   <- replicateM (fromIntegral opcode_base - 1) getWord8
-    _include_directories       <- whileM (/= "") getNullTerminatedUTF8String
+    _include_directories       <- whileM (/= "") getUTF8Str0
     file_names                 <- getDebugLineFileNames
     endLen <- Get.bytesRead
     -- Check if we have reached the end of the section.
@@ -856,11 +856,11 @@ getDwarfMacInfo = do
     x <- getWord8
     case x of
         0x00 -> pure []
-        0x01 -> pure (:) <*> (pure DW_MACINFO_define     <*> getULEB128 <*> getNullTerminatedUTF8String) <*> getDwarfMacInfo
-        0x02 -> pure (:) <*> (pure DW_MACINFO_undef      <*> getULEB128 <*> getNullTerminatedUTF8String) <*> getDwarfMacInfo
+        0x01 -> pure (:) <*> (pure DW_MACINFO_define     <*> getULEB128 <*> getUTF8Str0) <*> getDwarfMacInfo
+        0x02 -> pure (:) <*> (pure DW_MACINFO_undef      <*> getULEB128 <*> getUTF8Str0) <*> getDwarfMacInfo
         0x03 -> pure (:) <*> (pure DW_MACINFO_start_file <*> getULEB128 <*> getULEB128)              <*> getDwarfMacInfo
         0x04 -> pure (:) <*>  pure DW_MACINFO_end_file                                               <*> getDwarfMacInfo
-        0xff -> pure (:) <*> (pure DW_MACINFO_vendor_ext <*> getULEB128 <*> getNullTerminatedUTF8String) <*> getDwarfMacInfo
+        0xff -> pure (:) <*> (pure DW_MACINFO_vendor_ext <*> getULEB128 <*> getUTF8Str0) <*> getDwarfMacInfo
         _ -> fail $ "Invalid MACINFO id: " ++ show x
 
 -- Section 7.22 - Call Frame
@@ -951,7 +951,7 @@ getCIEFDE endianess target64 = do
     cie_id     <- drGetDwarfOffset dr
     if cie_id == drLargestOffset dr then do
         version                 <- getWord8
-        augmentation            <- getNullTerminatedUTF8String
+        augmentation            <- getUTF8Str0
         code_alignment_factor   <- getULEB128
         data_alignment_factor   <- getSLEB128
         return_address_register <- case version of
