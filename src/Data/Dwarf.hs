@@ -484,8 +484,11 @@ dw_at 0x68 = DW_AT_recursive
 dw_at n | 0x2000 <= n && n <= 0x3fff = DW_AT_user n
 dw_at n = error $ "Unrecognized DW_AT " ++ show n
 
+newtype AbbrevId = AbbrevId Word64
+  deriving (Eq, Ord, Read, Show)
+
 data DW_ABBREV = DW_ABBREV
-    { _abbrevNum       :: Word64
+    { _abbrevNum      :: AbbrevId
     , abbrevTag       :: DW_TAG
     , abbrevChildren  :: Bool
     , abbrevAttrForms :: [(DW_AT, DW_FORM)]
@@ -553,19 +556,29 @@ getDW_TAG = getULEB128 >>= dw_tag
           dw_tag n | 0x4080 <= n && n <= 0xffff = fail $ "User DW_TAG data requires extension of parser for code " ++ show n
           dw_tag n = fail $ "Unrecognized DW_TAG " ++ show n
 
-getAbbrevList :: Get [(Word64, DW_ABBREV)]
+getMAbbrevId :: Get (Maybe AbbrevId)
+getMAbbrevId = do
+  i <- getULEB128
+  pure $
+    if i == 0
+    then Nothing
+    else Just $ AbbrevId i
+
+getAbbrevList :: Get [(AbbrevId, DW_ABBREV)]
 getAbbrevList =
-  do abbrev <- getULEB128
-     if abbrev == 0
-       then pure []
-       else do tag       <- getDW_TAG
-               children  <- (== 1) <$> getWord8
-               attrForms <- getAttrFormList
-               xs <- getAbbrevList
-               pure  ((abbrev, DW_ABBREV abbrev tag children attrForms) : xs)
+  do mAbbrev <- getMAbbrevId
+     case mAbbrev of
+       Nothing -> pure []
+       Just abbrev -> do
+         tag       <- getDW_TAG
+         children  <- (== 1) <$> getWord8
+         attrForms <- getAttrFormList
+         xs <- getAbbrevList
+         pure  ((abbrev, DW_ABBREV abbrev tag children attrForms) : xs)
   where
-  getAttrFormList = (fmap . map) (dw_at *** dw_form)
-                  . whileM (/= (0,0)) $ (,) <$> getULEB128 <*> getULEB128
+    getAttrFormList =
+      (fmap . map) (dw_at *** dw_form) . whileM (/= (0,0)) $
+      (,) <$> getULEB128 <*> getULEB128
 
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -1105,7 +1118,7 @@ concatSiblings mParent diesAndDescendants =
 
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
 getDieAndSiblings ::
-  DieID -> M.Map Word64 DW_ABBREV -> DwarfReader ->
+  DieID -> M.Map AbbrevId DW_ABBREV -> DwarfReader ->
   B.ByteString -> Word64 -> Get [DIETree]
 getDieAndSiblings parent abbrev_map dr str_section cu_offset =
   concatSiblings (Just parent) <$> go
@@ -1114,15 +1127,15 @@ getDieAndSiblings parent abbrev_map dr str_section cu_offset =
       -- TODO: Move this including the "if" to getDIEAndDescendants,
       -- and have it return a Maybe
       offset <- DieID . fromIntegral <$> Get.bytesRead
-      abbrid <- getULEB128
-      if abbrid == 0
-        then pure []
-        else do
+      mAbbrid <- getMAbbrevId
+      case mAbbrid of
+        Nothing -> pure []
+        Just abbrid -> do
           dieDescendants <- getDIEAndDescendants offset (abbrev_map M.! abbrid) abbrev_map dr str_section cu_offset
           siblings <- go
           pure $ dieDescendants : siblings
 
-getDIEAndDescendants :: DieID -> DW_ABBREV -> M.Map Word64 DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [DIETree])
+getDIEAndDescendants :: DieID -> DW_ABBREV -> M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [DIETree])
 getDIEAndDescendants offset abbrev abbrev_map dr str_section cu_offset = do
   values    <- mapM (getForm dr str_section cu_offset) forms
   descendants <-
@@ -1152,7 +1165,7 @@ getDieCus odr abbrev_section str_section =
                         _ -> fail $ "Invalid address size: " ++ show addr_size
     -- TODO: This duplicates getDieAndSiblings
     cudie_offset   <- DieID . fromIntegral <$> Get.bytesRead
-    cu_abbr_num     <- getULEB128
+    Just cu_abbr_num <- getMAbbrevId
     let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
         abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
         cu_abbrev            = abbrev_map M.! cu_abbr_num
