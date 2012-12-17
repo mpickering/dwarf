@@ -1013,16 +1013,17 @@ parseDwarfLoc :: DwarfReader -> B.ByteString -> [Either Word64 (Word64, Word64, 
 parseDwarfLoc dr bs = runGet (getDwarfLoc dr) (L.fromChunks [bs])
 
 getDwarfLoc :: DwarfReader -> Get [Either Word64 (Word64, Word64, B.ByteString)]
-getDwarfLoc dr = do
-    begin <- drGetDwarfTargetAddress dr
-    end   <- drGetDwarfTargetAddress dr
-    if begin == 0 && end == 0 then
-        pure []
-     else if begin == drLargestTargetAddress dr then
-        pure (Left end :) <*> getDwarfLoc dr
+getDwarfLoc dr = whileMaybe $ do
+  begin <- drGetDwarfTargetAddress dr
+  end   <- drGetDwarfTargetAddress dr
+  if begin == 0 && end == 0
+    then pure Nothing
+    else Just <$>
+      if begin == drLargestTargetAddress dr then
+        pure $ Left end
       else do
         expr <- getByteStringLen (drGetW16 dr)
-        pure (Right (begin, end, expr) :) <*> getDwarfLoc dr
+        pure $ Right (begin, end, expr)
 
 data DW_TAG
     = DW_TAG_array_type
