@@ -25,7 +25,7 @@ module Data.Dwarf ( parseDwarfInfo
                   , dw_dsc
                   , (!?)
                   , DwarfReader(..)
-                  , DIE(..), dieId, dieParent, dieChildren, dieSiblingLeft, dieSiblingRight, dieTag, dieAttributes, dieReader
+                  , Tree(..), DIE(..)
                   , DW_CFA(..)
                   , DW_MACINFO(..)
                   , DW_CIEFDE(..)
@@ -51,8 +51,6 @@ module Data.Dwarf ( parseDwarfInfo
 
 import Control.Applicative (Applicative(..), (<$>))
 import Control.Arrow ((&&&), (***))
-import Control.Lens (SimpleLensLike)
-import Control.Lens.TH (makeLenses)
 import Control.Monad (replicateM)
 import Data.Binary (Binary(..), getWord8)
 import Data.Binary.Get (getByteString, getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get, runGet)
@@ -60,7 +58,6 @@ import Data.Bits (Bits, (.&.), (.|.), shiftL, shiftR, clearBit, testBit)
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Maybe (listToMaybe)
 import Data.Word (Word8, Word16, Word32, Word64)
-import qualified Control.Lens as Lens
 import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
@@ -577,7 +574,7 @@ getAbbrevList =
 
 -- | Utility function for retrieving the list of values for a specified attribute from a DWARF information entry.
 (!?) :: DIE -> DW_AT -> [DW_ATVAL]
-(!?) die at = map snd $ filter ((== at) . fst) $ _dieAttributes die
+(!?) die at = map snd $ filter ((== at) . fst) $ dieAttributes die
 
 -- | Returns compilation unit id given the header offset into .debug_info
 infoCompileUnit  :: B.ByteString -- ^ Contents of .debug_info
@@ -1066,41 +1063,44 @@ data DW_TAG
 -- parent->children? or even always keep the parens in context and not
 -- maintain that either?
 
+data Tree a = Tree
+  { treeParent       :: Maybe Word64        -- ^ Unique identifier of this entry's parent.
+  , treeSiblingLeft  :: Maybe Word64        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
+  , treeSiblingRight :: Maybe Word64        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
+  , treeData :: a
+  }
+
 -- | The dwarf information entries form a graph of nodes tagged with attributes. Please refer to the DWARF specification
 -- for semantics. Although it looks like a tree, there can be attributes which have adjacency information which will
 -- introduce cross-branch edges.
 data DIE = DIE
-    { _dieId           :: Word64              -- ^ Unique identifier for this entry.
-    , _dieParent       :: Maybe Word64        -- ^ Unique identifier of this entry's parent.
-    , _dieChildren     :: [Word64]            -- ^ Unique identifiers of this entry's children.
-    , _dieSiblingLeft  :: Maybe Word64        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
-    , _dieSiblingRight :: Maybe Word64        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
-    , _dieTag          :: DW_TAG              -- ^ Type tag.
-    , _dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
-    , _dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
+    { dieId           :: Word64              -- ^ Unique identifier for this entry.
+    , dieTag          :: DW_TAG              -- ^ Type tag.
+    , dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
+    , dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     } deriving (Show, Eq)
-makeLenses ''DIE
 
-addSiblings :: SimpleLensLike (Lens.Context DIE DIE) a DIE -> [a] -> [a]
-addSiblings lens = go Nothing
+addSiblings :: Maybe Word64 -> [(Word64, a)] -> [Tree a]
+addSiblings mParent = go Nothing
   where
     go _lSibling [] = []
-    go lSibling (x:xs) =
-      Lens.over (Lens.cloneLens lens)
-      (Lens.set dieSiblingLeft lSibling .
-       Lens.set dieSiblingRight (getId <$> listToMaybe xs)) x
-      : go (Just (getId x)) xs
-    getId = _dieId . Lens.view (Lens.cloneLens lens)
+    go lSibling ((i, x) : xs) =
+      Tree mParent lSibling (fst <$> listToMaybe xs) x :
+      go (Just i) xs
 
-concatSiblings :: [(DIE, [DIE])] -> [DIE]
-concatSiblings = concatMap (uncurry (:)) . addSiblings Lens._1
+concatSiblings :: Maybe Word64 -> [(DIE, [Tree DIE])] -> [Tree DIE]
+concatSiblings mParent diesAndDescendants =
+  addSiblings mParent (map (dieId &&& id) dies) ++ descendants
+  where
+    dies = map fst diesAndDescendants
+    descendants = concatMap snd diesAndDescendants
 
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
 getDieAndSiblings ::
   Word64 -> M.Map Word64 DW_ABBREV -> DwarfReader ->
-  B.ByteString -> Word64 -> Get [DIE]
+  B.ByteString -> Word64 -> Get [Tree DIE]
 getDieAndSiblings parent abbrev_map dr str_section cu_offset =
-  concatSiblings <$> go
+  concatSiblings (Just parent) <$> go
   where
     go = do
       offset <- fromIntegral <$> Get.bytesRead
@@ -1108,30 +1108,28 @@ getDieAndSiblings parent abbrev_map dr str_section cu_offset =
       if abbrid == 0
         then pure []
         else do
-          dieDescendants <- getDIEAndDescendants offset (abbrev_map M.! abbrid) parent abbrev_map dr str_section cu_offset
+          dieDescendants <- getDIEAndDescendants offset (abbrev_map M.! abbrid) abbrev_map dr str_section cu_offset
           siblings <- go
           pure $ dieDescendants : siblings
 
-getDIEAndDescendants :: Word64 -> DW_ABBREV -> Word64 -> M.Map Word64 DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [DIE])
-getDIEAndDescendants offset abbrev parent abbrev_map dr str_section cu_offset = do
+getDIEAndDescendants :: Word64 -> DW_ABBREV -> M.Map Word64 DW_ABBREV -> DwarfReader -> B.ByteString -> Word64 -> Get (DIE, [Tree DIE])
+getDIEAndDescendants offset abbrev abbrev_map dr str_section cu_offset = do
   values    <- mapM (getForm dr str_section cu_offset) forms
   descendants <-
     if abbrevChildren abbrev
     then getDieAndSiblings offset abbrev_map dr str_section cu_offset
     else pure []
-  -- TODO: YUCK!
-  let children = map _dieId $ filter (maybe False (== offset) . _dieParent) descendants
   pure $
-    (DIE offset (Just parent) children Nothing Nothing tag (zip attrs values) dr, descendants)
+    (DIE offset tag (zip attrs values) dr, descendants)
   where
     tag            = abbrevTag abbrev
     (attrs, forms) = unzip $ abbrevAttrForms abbrev
 
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
-getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIE]
+getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [Tree DIE]
 getDieCus odr abbrev_section str_section =
-  fmap concatSiblings .
+  fmap (concatSiblings Nothing) .
   getWhileNotEmpty $ do
     cu_offset       <- fromIntegral <$> Get.bytesRead
     (desr, _)       <- getDwarfUnitLength odr
@@ -1142,7 +1140,7 @@ getDieCus odr abbrev_section str_section =
                         4 -> pure $ dwarfReader TargetSize32 desr
                         8 -> pure $ dwarfReader TargetSize64 desr
                         _ -> fail $ "Invalid address size: " ++ show addr_size
-    cu_die_offset   <- fromIntegral <$> Get.bytesRead
+    cudie_offset   <- fromIntegral <$> Get.bytesRead
     cu_abbr_num     <- getULEB128
     let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
         abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
@@ -1153,12 +1151,11 @@ getDieCus odr abbrev_section str_section =
     cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
     cu_descendants <-
       if cu_has_children
-      then getDieAndSiblings cu_die_offset abbrev_map dr str_section cu_offset
+      then getDieAndSiblings cudie_offset abbrev_map dr str_section cu_offset
       else pure []
     -- TODO: YUCK!
-    let cu_children = map _dieId $ filter (maybe False (== cu_die_offset) . _dieParent) cu_descendants
     pure
-      ( DIE cu_die_offset Nothing cu_children Nothing Nothing cu_tag (zip cu_attrs cu_values) dr
+      ( DIE cudie_offset cu_tag (zip cu_attrs cu_values) dr
       , cu_descendants )
 
 -- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
@@ -1166,11 +1163,11 @@ parseDwarfInfo :: Endianess
                -> B.ByteString     -- ^ ByteString for the .debug_info section.
                -> B.ByteString     -- ^ ByteString for the .debug_abbrev section.
                -> B.ByteString     -- ^ ByteString for the .debug_str section.
-               -> M.Map Word64 DIE -- ^ A map from the unique ids to their corresponding DWARF information entries.
+               -> M.Map Word64 (Tree DIE) -- ^ A map from the unique ids to their corresponding DWARF information entries.
 parseDwarfInfo endianess info_section abbrev_section str_section =
     let dr = dwarfEndianReader endianess
         di = runGet (getDieCus dr abbrev_section str_section) $ L.fromChunks [info_section]
-    in M.fromList $ map (_dieId &&& id) di
+    in M.fromList $ map (dieId . treeData &&& id) di
 
 data DW_OP
     = DW_OP_addr Word64
