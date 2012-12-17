@@ -994,16 +994,23 @@ data Range = Range
 parseDwarfRanges :: DwarfReader -> B.ByteString -> [Range]
 parseDwarfRanges dr bs = runGet (getDwarfRanges dr) $ L.fromChunks [bs]
 
-getDwarfRanges :: DwarfReader -> Get [Range]
-getDwarfRanges dr = whileJust $ do
+getMRange :: DwarfReader -> Get (Maybe (Maybe Word64, Word64))
+getMRange dr = do
   begin <- drGetDwarfTargetAddress dr
   end   <- drGetDwarfTargetAddress dr
-  if begin == 0 && end == 0
-    then pure Nothing
-    else Just <$>
+  pure $
+    if begin == 0 && end == 0
+    then Nothing
+    else Just $
       if begin == drLargestTargetAddress dr
-      then pure Range { rangeMBegin = Nothing, rangeEnd = end }
-      else pure Range { rangeMBegin = Just begin, rangeEnd = end }
+      then (Nothing, end)
+      else (Just begin, end)
+
+getDwarfRanges :: DwarfReader -> Get [Range]
+getDwarfRanges dr = whileJust $ fmap mkRange <$> getMRange dr
+  where
+    mkRange (mBegin, end) =
+      Range { rangeMBegin = mBegin, rangeEnd = end }
 
 -- Section 7.7.3
 -- | Retrieves the location list expressions from a given substring of the .debug_loc section. The offset
@@ -1013,17 +1020,12 @@ parseDwarfLoc :: DwarfReader -> B.ByteString -> [Either Word64 (Word64, Word64, 
 parseDwarfLoc dr bs = runGet (getDwarfLoc dr) (L.fromChunks [bs])
 
 getDwarfLoc :: DwarfReader -> Get [Either Word64 (Word64, Word64, B.ByteString)]
-getDwarfLoc dr = whileJust $ do
-  begin <- drGetDwarfTargetAddress dr
-  end   <- drGetDwarfTargetAddress dr
-  if begin == 0 && end == 0
-    then pure Nothing
-    else Just <$>
-      if begin == drLargestTargetAddress dr then
-        pure $ Left end
-      else do
-        expr <- getByteStringLen (drGetW16 dr)
-        pure $ Right (begin, end, expr)
+getDwarfLoc dr = whileJust $ traverse mkRange =<< getMRange dr
+  where
+    mkRange (Nothing, end) = pure $ Left end
+    mkRange (Just begin, end) = do
+      expr <- getByteStringLen (drGetW16 dr)
+      pure $ Right (begin, end, expr)
 
 data DW_TAG
     = DW_TAG_array_type
