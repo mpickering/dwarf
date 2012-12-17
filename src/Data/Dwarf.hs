@@ -1111,7 +1111,13 @@ data DIE = DIE
     , dieTag          :: DW_TAG              -- ^ Type tag.
     , dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
     , dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
-    } deriving (Show)
+    }
+instance Show DIE where
+  show (DIE (DieID i) tag attrs _) =
+    unwords $ ["DIE", show i, show tag] ++ concat
+    [ [show attr, "=", show val]
+    | (attr, val) <- attrs
+    ]
 
 type DIETree = Tree DieID DIE
 
