@@ -279,7 +279,7 @@ strictGet :: Get a -> B.ByteString -> a
 strictGet action bs = runGet action $ L.fromChunks [bs]
 
 getAt :: Get a -> Word64 -> B.ByteString -> a
-getAt action offset = strictGet action . B.drop (fromIntegral offset)
+getAt action offset = strictGet $ Get.skip (fromIntegral offset) >> action
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
@@ -1177,8 +1177,8 @@ getDieCus odr abbrev_section str_section =
     (desr, _)       <- getDwarfUnitLength odr
     _version        <- desrGetW16 desr
     abbrev_offset   <- desrGetDwarfOffset desr
-    let abbrev_table = B.drop (fromIntegral abbrev_offset) abbrev_section
-        abbrev_map   = M.fromList . map (abbrevId &&& id) $ strictGet getAbbrevList abbrev_table
+    let abbrev_map   = M.fromList . map (abbrevId &&& id) $
+                       getAt getAbbrevList abbrev_offset abbrev_section
     addr_size       <- getWord8
     dr              <- case addr_size of
                         4 -> pure $ dwarfReader TargetSize32 desr
