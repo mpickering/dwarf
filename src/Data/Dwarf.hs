@@ -598,17 +598,20 @@ infoCompileUnit infoSection offset =
     0xffffffff -> offset + 23
     _ -> offset + 11
 
+getNonZeroDwarfOffset :: DwarfReader -> Get (Maybe Word64)
+getNonZeroDwarfOffset dr = do
+  offset <- drGetDwarfOffset dr
+  pure $ if offset == 0 then Nothing else Just offset
+
 -- Section 7.19 - Name Lookup Tables
 -- TODO: Is this Word64 really a CU? It's being passed as a "debug_info_offset"
 getNameLookupEntries :: DwarfReader -> Word64 -> Get [(String, [Word64])]
-getNameLookupEntries dr cu_offset = do
-    die_offset <- drGetDwarfOffset dr
-    if die_offset == 0 then
-        pure []
-     else do
-        name <- getNullTerminatedUTF8String
-        rest <- getNameLookupEntries dr cu_offset
-        pure $ (name, [cu_offset + die_offset]) : rest
+getNameLookupEntries dr cu_offset =
+  whileMaybe $ traverse getEntry =<< getNonZeroDwarfOffset dr
+  where
+    getEntry die_offset = do
+      name <- getNullTerminatedUTF8String
+      pure (name, [cu_offset + die_offset])
 
 getDebugInfoOffset :: TargetSize -> DwarfEndianReader -> Get (DwarfReader, Word64)
 getDebugInfoOffset target64 odr = do
