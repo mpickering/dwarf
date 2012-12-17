@@ -69,8 +69,8 @@ import qualified Data.Map as M
 -- Utility functions.
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-whileMaybe :: (Applicative m, Monad m) => m (Maybe a) -> m [a]
-whileMaybe act = go
+whileJust :: (Applicative m, Monad m) => m (Maybe a) -> m [a]
+whileJust act = go
   where
     go = do
       res <- act
@@ -80,7 +80,7 @@ whileMaybe act = go
 
 -- Repeatedly perform the get operation until the boolean fails.
 whileM :: (Applicative m, Monad m) => (a -> Bool) -> m a -> m [a]
-whileM cond act = whileMaybe $ do
+whileM cond act = whileJust $ do
   res <- act
   pure $
     if cond res
@@ -88,7 +88,7 @@ whileM cond act = whileMaybe $ do
     else Nothing
 
 getWhileNotEmpty :: Get a -> Get [a]
-getWhileNotEmpty act = whileMaybe $ do
+getWhileNotEmpty act = whileJust $ do
   e <- Get.isEmpty
   if e
     then pure Nothing
@@ -568,7 +568,7 @@ getMAbbrevId = do
 
 getAbbrevList :: Get [DW_ABBREV]
 getAbbrevList =
-  whileMaybe $ traverse getAbbrev =<< getMAbbrevId
+  whileJust $ traverse getAbbrev =<< getMAbbrevId
   where
     getAbbrev abbrev = do
       tag       <- getDW_TAG
@@ -607,7 +607,7 @@ getNonZeroDwarfOffset dr = do
 -- TODO: Is this Word64 really a CU? It's being passed as a "debug_info_offset"
 getNameLookupEntries :: DwarfReader -> Word64 -> Get [(String, [Word64])]
 getNameLookupEntries dr cu_offset =
-  whileMaybe $ traverse getEntry =<< getNonZeroDwarfOffset dr
+  whileJust $ traverse getEntry =<< getNonZeroDwarfOffset dr
   where
     getEntry die_offset = do
       name <- getUTF8Str0
@@ -798,7 +798,7 @@ getNonEmptyUTF8Str0 = do
   pure $ if null str then Nothing else Just str
 
 getDebugLineFileNames :: Get [(String, Word64, Word64, Word64)]
-getDebugLineFileNames = whileMaybe $ traverse entry =<< getNonEmptyUTF8Str0
+getDebugLineFileNames = whileJust $ traverse entry =<< getNonEmptyUTF8Str0
   where
     entry file_name = do
       dir_index   <- getULEB128
@@ -995,7 +995,7 @@ parseDwarfRanges :: DwarfReader -> B.ByteString -> [Range]
 parseDwarfRanges dr bs = runGet (getDwarfRanges dr) $ L.fromChunks [bs]
 
 getDwarfRanges :: DwarfReader -> Get [Range]
-getDwarfRanges dr = whileMaybe $ do
+getDwarfRanges dr = whileJust $ do
   begin <- drGetDwarfTargetAddress dr
   end   <- drGetDwarfTargetAddress dr
   if begin == 0 && end == 0
@@ -1013,7 +1013,7 @@ parseDwarfLoc :: DwarfReader -> B.ByteString -> [Either Word64 (Word64, Word64, 
 parseDwarfLoc dr bs = runGet (getDwarfLoc dr) (L.fromChunks [bs])
 
 getDwarfLoc :: DwarfReader -> Get [Either Word64 (Word64, Word64, B.ByteString)]
-getDwarfLoc dr = whileMaybe $ do
+getDwarfLoc dr = whileJust $ do
   begin <- drGetDwarfTargetAddress dr
   end   <- drGetDwarfTargetAddress dr
   if begin == 0 && end == 0
