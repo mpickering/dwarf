@@ -57,6 +57,7 @@ import Data.Binary.Get (getByteString, getWord16be, getWord32be, getWord64be, ge
 import Data.Bits (Bits, (.&.), (.|.), shiftL, shiftR, clearBit, testBit)
 import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Maybe (listToMaybe)
+import Data.Traversable (traverse)
 import Data.Word (Word8, Word16, Word32, Word64)
 import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
@@ -489,7 +490,7 @@ newtype AbbrevId = AbbrevId Word64
   deriving (Eq, Ord, Read, Show)
 
 data DW_ABBREV = DW_ABBREV
-    { _abbrevNum      :: AbbrevId
+    { abbrevId        :: AbbrevId
     , abbrevTag       :: DW_TAG
     , abbrevChildren  :: Bool
     , abbrevAttrForms :: [(DW_AT, DW_FORM)]
@@ -565,18 +566,15 @@ getMAbbrevId = do
     then Nothing
     else Just $ AbbrevId i
 
-getAbbrevList :: Get [(AbbrevId, DW_ABBREV)]
+getAbbrevList :: Get [DW_ABBREV]
 getAbbrevList =
-  do mAbbrev <- getMAbbrevId
-     case mAbbrev of
-       Nothing -> pure []
-       Just abbrev -> do
-         tag       <- getDW_TAG
-         children  <- (== 1) <$> getWord8
-         attrForms <- getAttrFormList
-         xs <- getAbbrevList
-         pure  ((abbrev, DW_ABBREV abbrev tag children attrForms) : xs)
+  whileMaybe $ traverse getAbbrev =<< getMAbbrevId
   where
+    getAbbrev abbrev = do
+      tag       <- getDW_TAG
+      children  <- (== 1) <$> getWord8
+      attrForms <- getAttrFormList
+      pure $ DW_ABBREV abbrev tag children attrForms
     getAttrFormList =
       (fmap . map) (dw_at *** dw_form) . whileM (/= (0,0)) $
       (,) <$> getULEB128 <*> getULEB128
@@ -1169,7 +1167,7 @@ getDieCus odr abbrev_section str_section =
     cudie_offset   <- DieID . fromIntegral <$> Get.bytesRead
     Just cu_abbr_num <- getMAbbrevId
     let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
-        abbrev_map           = M.fromList $ runGet getAbbrevList $ L.fromChunks [abbrev_table]
+        abbrev_map           = M.fromList . map (abbrevId &&& id) . runGet getAbbrevList $ L.fromChunks [abbrev_table]
         cu_abbrev            = abbrev_map M.! cu_abbr_num
         cu_tag               = abbrevTag cu_abbrev
         cu_has_children      = abbrevChildren cu_abbrev
