@@ -189,6 +189,7 @@ data DwarfReader = DwarfReader
     }
 instance Show DwarfReader where
     show dr = "DwarfReader " ++ show (drDesr dr) ++ " " ++ show (drTarget64 dr)
+
 dwarfReader :: TargetSize -> DwarfEndianSizeReader -> DwarfReader
 dwarfReader TargetSize64 desr = DwarfReader desr TargetSize64 0xffffffffffffffff (desrGetW64 desr)
 dwarfReader TargetSize32 desr = DwarfReader desr TargetSize32 0xffffffff         $ fromIntegral <$> desrGetW32 desr
@@ -263,7 +264,7 @@ data DW_ATVAL
     | DW_ATVAL_STRING String
     | DW_ATVAL_BLOB   B.ByteString
     | DW_ATVAL_BOOL   Bool
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 
 getByteStringLen :: Integral a => Get a -> Get B.ByteString
 getByteStringLen lenGetter =
@@ -402,7 +403,8 @@ data DW_AT
     | DW_AT_return                 -- ^ flag
     | DW_AT_recursive            -- ^ flag
     | DW_AT_user Word64          -- ^ user extension
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
+
 dw_at :: Word64 -> DW_AT
 dw_at 0x01 = DW_AT_sibling
 dw_at 0x02 = DW_AT_location
@@ -1089,17 +1091,14 @@ data DW_TAG
     | DW_TAG_imported_unit
     | DW_TAG_condition
     | DW_TAG_shared_type
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 
 data Tree ptr a = Tree
   { treeParent       :: Maybe ptr        -- ^ Unique identifier of this entry's parent.
   , treeSiblingLeft  :: Maybe ptr        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
   , treeSiblingRight :: Maybe ptr        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
   , treeData :: a
-  }
-
-instance Show a => Show (Tree ptr a) where
-  show tree = show (treeData tree)
+  } deriving (Eq, Ord, Read, Show)
 
 newtype DieID = DieID Word64
   deriving (Eq, Ord, Read, Show)
