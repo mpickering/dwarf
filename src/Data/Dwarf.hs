@@ -134,11 +134,14 @@ getDwarfUnitLength der = do
     size <- derGetW32 der
     if size == 0xffffffff then do
         size64 <- derGetW64 der
-        pure (dwarfEndianSizeReader DwarfEncoding64 der, size64)
-     else if size >= 0xffffff00 then
-        fail ("Invalid DWARF size " ++ show size)
+        pos <- Get.bytesRead
+        pure (dwarfEndianSizeReader DwarfEncoding64 der, fromIntegral pos + size64)
+     else
+      if size < 0xffffff00 then do
+        pos <- Get.bytesRead
+        pure (dwarfEndianSizeReader DwarfEncoding32 der, fromIntegral pos + fromIntegral size)
       else
-        pure (dwarfEndianSizeReader DwarfEncoding32 der, fromIntegral size)
+        fail $ "Invalid DWARF size: " ++ show size
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- DWARF decoder records.
@@ -618,7 +621,7 @@ getNameLookupEntries dr cu_offset =
 
 getDebugInfoOffset :: TargetSize -> DwarfEndianReader -> Get (DwarfReader, Word64)
 getDebugInfoOffset target64 odr = do
-  (der, _)          <- getDwarfUnitLength odr
+  (der, _)         <- getDwarfUnitLength odr
   let dr            = dwarfReader target64 der
   _version          <- drGetW16 dr
   debug_info_offset <- drGetDwarfOffset dr
@@ -819,9 +822,8 @@ parseDwarfLine endianess target64 bs =
     in strictGet (getDwarfLine target64 dr) bs
 getDwarfLine :: TargetSize -> DwarfEndianReader -> Get ([String], [DW_LNE])
 getDwarfLine target64 der = do
-    (desr, sectLen)            <- getDwarfUnitLength der
-    startLen <- Get.bytesRead
-    let dr                     = dwarfReader target64 desr
+    (desr, endPos)             <- getDwarfUnitLength der
+    let dr                      = dwarfReader target64 desr
     _version                   <- drGetW16 dr
     _header_length             <- drGetDwarfOffset dr
     minimum_instruction_length <- getWord8
@@ -832,9 +834,9 @@ getDwarfLine target64 der = do
     _standard_opcode_lengths   <- replicateM (fromIntegral opcode_base - 1) getWord8
     _include_directories       <- whileM (/= "") getUTF8Str0
     file_names                 <- getDebugLineFileNames
-    endLen <- Get.bytesRead
+    curPos <- fromIntegral <$> Get.bytesRead
     -- Check if we have reached the end of the section.
-    if fromIntegral sectLen <= endLen - startLen
+    if endPos <= curPos
       then pure (map (\(name, _, _, _) -> name) file_names, [])
       else do
         line_program <-
@@ -954,9 +956,8 @@ data DW_CIEFDE
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
     let der    = dwarfEndianReader endianess
-    (dur, len) <- getDwarfUnitLength der
+    (dur, endPos) <- getDwarfUnitLength der
     let dr     = dwarfReader target64 dur
-    begin      <- Get.bytesRead
     cie_id     <- drGetDwarfOffset dr
     if cie_id == drLargestOffset dr then do
         version                 <- getWord8
@@ -967,15 +968,15 @@ getCIEFDE endianess target64 = do
                                     1 -> fromIntegral <$> getWord8
                                     3 -> getULEB128
                                     n -> fail $ "Unrecognized CIE version " ++ show n
-        end                     <- Get.bytesRead
-        raw_instructions        <- getByteString $ fromIntegral (fromIntegral len - (end - begin))
+        curPos                  <- fromIntegral <$> Get.bytesRead
+        raw_instructions        <- getByteString $ fromIntegral (endPos - curPos)
         let initial_instructions = strictGet (getWhileNotEmpty (getDW_CFA dr)) raw_instructions
         pure $ DW_CIE augmentation code_alignment_factor data_alignment_factor return_address_register initial_instructions
      else do
         initial_location        <- drGetDwarfTargetAddress dr
         address_range           <- drGetDwarfTargetAddress dr
-        end                     <- Get.bytesRead
-        raw_instructions        <- getByteString $ fromIntegral (fromIntegral len - (end - begin))
+        curPos                  <- fromIntegral <$> Get.bytesRead
+        raw_instructions        <- getByteString $ fromIntegral (endPos - curPos)
         let instructions        = strictGet (getWhileNotEmpty (getDW_CFA dr)) raw_instructions
         pure $ DW_FDE cie_id initial_location address_range instructions
 
