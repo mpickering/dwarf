@@ -68,35 +68,30 @@ import qualified Data.Map as M
 -- Utility functions.
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
+whileMaybe :: (Applicative m, Monad m) => m (Maybe a) -> m [a]
+whileMaybe act = go
+  where
+    go = do
+      res <- act
+      case res of
+        Nothing -> pure []
+        Just x -> (x :) <$> go
+
 -- Repeatedly perform the get operation until the boolean fails.
 whileM :: (Applicative m, Monad m) => (a -> Bool) -> m a -> m [a]
-whileM cond act = go
-  where
-    go = do
-      el <- act
-      if cond el then
-          (el :) <$> go
-       else
-          pure []
-
-whileMInclusive :: (Applicative m, Monad m) => (a -> Bool) -> m a -> m [a]
-whileMInclusive cond act = go
-  where
-    go = do
-      el <- act
-      (el :) <$>
-        if cond el
-        then go
-        else pure []
+whileM cond act = whileMaybe $ do
+  res <- act
+  pure $
+    if cond res
+    then Just res
+    else Nothing
 
 getWhileNotEmpty :: Get a -> Get [a]
-getWhileNotEmpty act = go
-  where
-    go = do
-      empty <- Get.isEmpty
-      if empty
-        then pure []
-        else (:) <$> act <*> go
+getWhileNotEmpty act = whileMaybe $ do
+  e <- Get.isEmpty
+  if e
+    then pure Nothing
+    else Just <$> act
 
 getNullTerminatedUTF8String :: Get String
 getNullTerminatedUTF8String = UTF8.toString . B.pack <$> whileM (/= 0) getWord8
@@ -832,11 +827,11 @@ getDwarfLine target64 der = do
     if fromIntegral sectLen <= endLen - startLen
       then pure (map (\(name, _, _, _) -> name) file_names, [])
       else do
-        line_program <- whileMInclusive (/= DW_LNE_end_sequence) $
-                           getDW_LNI dr (fromIntegral line_base)
-                                        line_range
-                                        opcode_base
-                                        (fromIntegral minimum_instruction_length)
+        line_program <-
+          fmap (++ [DW_LNE_end_sequence]) .
+          whileM (/= DW_LNE_end_sequence) .
+            getDW_LNI dr (fromIntegral line_base) line_range opcode_base $
+            fromIntegral minimum_instruction_length
         let initial_state = defaultLNE default_is_stmt file_names
             line_matrix = stepLineMachine default_is_stmt minimum_instruction_length initial_state line_program
          in pure (map (\(name, _, _, _) -> name) file_names, line_matrix)
