@@ -791,16 +791,20 @@ defaultLNE is_stmt files = DW_LNE
     , lnmISA           = 0
     , lnmFiles         = files
     }
+
+getNonEmptyUTF8Str0 :: Get (Maybe String)
+getNonEmptyUTF8Str0 = do
+  str <- getUTF8Str0
+  pure $ if null str then Nothing else Just str
+
 getDebugLineFileNames :: Get [(String, Word64, Word64, Word64)]
-getDebugLineFileNames = do
-    file_name <- getUTF8Str0
-    if file_name == [] then
-        pure []
-     else do
-        dir_index   <- getULEB128
-        last_mod    <- getULEB128
-        file_length <- getULEB128
-        ((file_name, dir_index, last_mod, file_length) :) <$> getDebugLineFileNames
+getDebugLineFileNames = whileMaybe $ traverse entry =<< getNonEmptyUTF8Str0
+  where
+    entry file_name = do
+      dir_index   <- getULEB128
+      last_mod    <- getULEB128
+      file_length <- getULEB128
+      pure (file_name, dir_index, last_mod, file_length)
 
 -- | Retrieves the line information for a DIE from a given substring of the .debug_line section. The offset
 -- into the .debug_line section is obtained from the DW_AT_stmt_list attribute of a DIE.
