@@ -1140,14 +1140,12 @@ getDieAndSiblings parent abbrev_map dr str_section cu_offset =
   concatSiblings (Just parent) <$> go
   where
     go =
-      whileJust $
-      getDIEAndDescendants abbrev_map dr str_section cu_offset =<<
-      DieID . fromIntegral <$> Get.bytesRead
+      whileJust $ getDIEAndDescendants abbrev_map dr str_section cu_offset
 
-getDIEAndDescendants :: M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> CUOffset -> DieID -> Get (Maybe (DIE, [DIETree]))
-getDIEAndDescendants abbrev_map dr str_section cu_offset offset =
-  traverse go =<< getMAbbrevId
-  where
+getDIEAndDescendants :: M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> CUOffset -> Get (Maybe (DIE, [DIETree]))
+getDIEAndDescendants abbrev_map dr str_section cu_offset = do
+  offset <- DieID . fromIntegral <$> Get.bytesRead
+  let
     go abbrid = do
       let
         abbrev         = abbrev_map M.! abbrid
@@ -1160,6 +1158,7 @@ getDIEAndDescendants abbrev_map dr str_section cu_offset offset =
         else pure []
       pure $
         (DIE offset tag (zip attrs values) dr, descendants)
+  traverse go =<< getMAbbrevId
 
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
@@ -1171,29 +1170,16 @@ getDieCus odr abbrev_section str_section =
     (desr, _)       <- getDwarfUnitLength odr
     _version        <- desrGetW16 desr
     abbrev_offset   <- desrGetDwarfOffset desr
+    let abbrev_table = B.drop (fromIntegral abbrev_offset) abbrev_section
+        abbrev_map   = M.fromList . map (abbrevId &&& id) . runGet getAbbrevList $ L.fromChunks [abbrev_table]
     addr_size       <- getWord8
     dr              <- case addr_size of
                         4 -> pure $ dwarfReader TargetSize32 desr
                         8 -> pure $ dwarfReader TargetSize64 desr
                         _ -> fail $ "Invalid address size: " ++ show addr_size
     -- TODO: This duplicates getDieAndSiblings
-    cudie_offset   <- DieID . fromIntegral <$> Get.bytesRead
-    Just cu_abbr_num <- getMAbbrevId
-    let abbrev_table         = B.drop (fromIntegral abbrev_offset) abbrev_section
-        abbrev_map           = M.fromList . map (abbrevId &&& id) . runGet getAbbrevList $ L.fromChunks [abbrev_table]
-        cu_abbrev            = abbrev_map M.! cu_abbr_num
-        cu_tag               = abbrevTag cu_abbrev
-        cu_has_children      = abbrevChildren cu_abbrev
-        (cu_attrs, cu_forms) = unzip $ abbrevAttrForms cu_abbrev
-    cu_values    <- mapM (getForm dr str_section cu_offset) cu_forms
-    cu_descendants <-
-      if cu_has_children
-      then getDieAndSiblings cudie_offset abbrev_map dr str_section cu_offset
-      else pure []
-    -- TODO: YUCK!
-    pure
-      ( DIE cudie_offset cu_tag (zip cu_attrs cu_values) dr
-      , cu_descendants )
+    maybe (fail "Compilation Unit must have a DIE") return =<<
+      getDIEAndDescendants abbrev_map dr str_section cu_offset
 
 -- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
 parseDwarfInfo :: Endianess
