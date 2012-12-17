@@ -978,18 +978,20 @@ parseDwarfFrame endianess target64 bs =
   runGet (getWhileNotEmpty $ getCIEFDE endianess target64) (L.fromChunks [bs])
 
 data Range = Range
-  { rangeMBegin :: Maybe Word64
-  , rangeEnd :: Word64
+  { rangeMBegin :: !Word64
+  , rangeEnd :: !Word64
   }
+
+newtype RangeEnd = RangeEnd Word64
 
 -- Section 7.23 - Non-contiguous Address Ranges
 -- | Retrieves the non-contiguous address ranges for a compilation unit from a given substring of the .debug_ranges section. The offset
 -- into the .debug_ranges section is obtained from the DW_AT_ranges attribute of a compilation unit DIE.
 -- Left results are base address entries. Right results are address ranges.
-parseDwarfRanges :: DwarfReader -> B.ByteString -> [Range]
+parseDwarfRanges :: DwarfReader -> B.ByteString -> [Either RangeEnd Range]
 parseDwarfRanges dr bs = runGet (getDwarfRanges dr) $ L.fromChunks [bs]
 
-getMRange :: DwarfReader -> Get (Maybe (Maybe Word64, Word64))
+getMRange :: DwarfReader -> Get (Maybe (Either RangeEnd Range))
 getMRange dr = do
   begin <- drGetDwarfTargetAddress dr
   end   <- drGetDwarfTargetAddress dr
@@ -998,29 +1000,25 @@ getMRange dr = do
     then Nothing
     else Just $
       if begin == drLargestTargetAddress dr
-      then (Nothing, end)
-      else (Just begin, end)
+      then Left $ RangeEnd end
+      else Right $ Range begin end
 
-getDwarfRanges :: DwarfReader -> Get [Range]
-getDwarfRanges dr = whileJust $ fmap mkRange <$> getMRange dr
-  where
-    mkRange (mBegin, end) =
-      Range { rangeMBegin = mBegin, rangeEnd = end }
+getDwarfRanges :: DwarfReader -> Get [Either RangeEnd Range]
+getDwarfRanges dr = whileJust $ getMRange dr
 
 -- Section 7.7.3
 -- | Retrieves the location list expressions from a given substring of the .debug_loc section. The offset
 -- into the .debug_loc section is obtained from an attribute of class loclistptr for a given DIE.
 -- Left results are base address entries. Right results are address ranges and a location expression.
-parseDwarfLoc :: DwarfReader -> B.ByteString -> [Either Word64 (Word64, Word64, B.ByteString)]
+parseDwarfLoc :: DwarfReader -> B.ByteString -> [Either RangeEnd (Range, B.ByteString)]
 parseDwarfLoc dr bs = runGet (getDwarfLoc dr) (L.fromChunks [bs])
 
-getDwarfLoc :: DwarfReader -> Get [Either Word64 (Word64, Word64, B.ByteString)]
+getDwarfLoc :: DwarfReader -> Get [Either RangeEnd (Range, B.ByteString)]
 getDwarfLoc dr = whileJust $ traverse mkRange =<< getMRange dr
   where
-    mkRange (Nothing, end) = pure $ Left end
-    mkRange (Just begin, end) = do
-      expr <- getByteStringLen (drGetW16 dr)
-      pure $ Right (begin, end, expr)
+    mkRange (Left end) = pure $ Left end
+    mkRange (Right range) =
+      Right . (,) range <$> getByteStringLen (drGetW16 dr)
 
 data DW_TAG
     = DW_TAG_array_type
