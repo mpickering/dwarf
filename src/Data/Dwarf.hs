@@ -1083,10 +1083,6 @@ data DW_TAG
     | DW_TAG_shared_type
     deriving (Show, Eq)
 
--- TODO: Do we really want to maintain the siblings? We could go to
--- parent->children? or even always keep the parens in context and not
--- maintain that either?
-
 data Tree ptr a = Tree
   { treeParent       :: Maybe ptr        -- ^ Unique identifier of this entry's parent.
   , treeSiblingLeft  :: Maybe ptr        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
@@ -1180,7 +1176,6 @@ getDieCus odr abbrev_section str_section =
                         4 -> pure $ dwarfReader TargetSize32 desr
                         8 -> pure $ dwarfReader TargetSize64 desr
                         _ -> fail $ "Invalid address size: " ++ show addr_size
-    -- TODO: This duplicates getDieAndSiblings
     maybe (fail "Compilation Unit must have a DIE") return =<<
       getDIEAndDescendants CUContext
         { cuReader = dr
