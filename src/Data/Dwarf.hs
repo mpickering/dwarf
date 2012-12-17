@@ -275,32 +275,35 @@ inCU (CUOffset base) x = base + fromIntegral x
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-getForm :: DwarfReader -> B.ByteString -> CUOffset -> DW_FORM -> Get DW_ATVAL
-getForm dr str cu form = case form of
-  DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetDwarfTargetAddress dr
-  DW_FORM_block1    -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
-  DW_FORM_block2    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW16 dr)
-  DW_FORM_block4    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW32 dr)
-  DW_FORM_block     -> DW_ATVAL_BLOB <$> getByteStringLen getULEB128
-  DW_FORM_data1     -> DW_ATVAL_UINT . fromIntegral <$> getWord8
-  DW_FORM_data2     -> DW_ATVAL_UINT . fromIntegral <$> drGetW16 dr
-  DW_FORM_data4     -> DW_ATVAL_UINT . fromIntegral <$> drGetW32 dr
-  DW_FORM_data8     -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
-  DW_FORM_udata     -> DW_ATVAL_UINT <$> getULEB128
-  DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
-  DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
-  DW_FORM_string    -> DW_ATVAL_STRING <$> getUTF8Str0
-  DW_FORM_ref1      -> DW_ATVAL_UINT . inCU cu <$> getWord8
-  DW_FORM_ref2      -> DW_ATVAL_UINT . inCU cu <$> drGetW16 dr
-  DW_FORM_ref4      -> DW_ATVAL_UINT . inCU cu <$> drGetW32 dr
-  DW_FORM_ref8      -> DW_ATVAL_UINT . inCU cu <$> drGetW64 dr
-  DW_FORM_ref_udata -> DW_ATVAL_UINT . inCU cu <$> getULEB128
-  DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetDwarfOffset dr
-  DW_FORM_indirect  -> getForm dr str cu . dw_form =<< getULEB128
-  DW_FORM_strp      -> do
-    offset <- fromIntegral <$> drGetDwarfOffset dr
-    pure . DW_ATVAL_STRING .
-      runGet getUTF8Str0 $ L.fromChunks [B.drop offset str]
+getForm :: CUContext -> DW_FORM -> Get DW_ATVAL
+getForm
+  cuContext@CUContext { cuReader = dr, cuOffset = cu, cuDwarfContext = dc }
+  form
+  = case form of
+    DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetDwarfTargetAddress dr
+    DW_FORM_block1    -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
+    DW_FORM_block2    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW16 dr)
+    DW_FORM_block4    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW32 dr)
+    DW_FORM_block     -> DW_ATVAL_BLOB <$> getByteStringLen getULEB128
+    DW_FORM_data1     -> DW_ATVAL_UINT . fromIntegral <$> getWord8
+    DW_FORM_data2     -> DW_ATVAL_UINT . fromIntegral <$> drGetW16 dr
+    DW_FORM_data4     -> DW_ATVAL_UINT . fromIntegral <$> drGetW32 dr
+    DW_FORM_data8     -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
+    DW_FORM_udata     -> DW_ATVAL_UINT <$> getULEB128
+    DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
+    DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
+    DW_FORM_string    -> DW_ATVAL_STRING <$> getUTF8Str0
+    DW_FORM_ref1      -> DW_ATVAL_UINT . inCU cu <$> getWord8
+    DW_FORM_ref2      -> DW_ATVAL_UINT . inCU cu <$> drGetW16 dr
+    DW_FORM_ref4      -> DW_ATVAL_UINT . inCU cu <$> drGetW32 dr
+    DW_FORM_ref8      -> DW_ATVAL_UINT . inCU cu <$> drGetW64 dr
+    DW_FORM_ref_udata -> DW_ATVAL_UINT . inCU cu <$> getULEB128
+    DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetDwarfOffset dr
+    DW_FORM_indirect  -> getForm cuContext . dw_form =<< getULEB128
+    DW_FORM_strp      -> do
+      offset <- fromIntegral <$> drGetDwarfOffset dr
+      pure . DW_ATVAL_STRING .
+        runGet getUTF8Str0 $ L.fromChunks [B.drop offset (dcStrSection dc)]
 
 data DW_AT
     = DW_AT_sibling              -- ^ reference
@@ -1124,33 +1127,41 @@ concatSiblings mParent diesAndDescendants =
     dies = map fst diesAndDescendants
     descendants = concatMap snd diesAndDescendants
 
--- Decode a non-compilation unit DWARF information entry, its children and its siblings.
-getDieAndSiblings ::
-  DieID -> M.Map AbbrevId DW_ABBREV -> DwarfReader ->
-  B.ByteString -> CUOffset -> Get [DIETree]
-getDieAndSiblings parent abbrev_map dr str_section cu_offset =
-  concatSiblings (Just parent) <$> go
-  where
-    go =
-      whileJust $ getDIEAndDescendants abbrev_map dr str_section cu_offset
+newtype DwarfContext = DwarfContext
+  { dcStrSection :: B.ByteString
+  }
 
-getDIEAndDescendants :: M.Map AbbrevId DW_ABBREV -> DwarfReader -> B.ByteString -> CUOffset -> Get (Maybe (DIE, [DIETree]))
-getDIEAndDescendants abbrev_map dr str_section cu_offset = do
+data CUContext = CUContext
+  { cuOffset :: CUOffset
+  , cuAbbrevMap :: M.Map AbbrevId DW_ABBREV
+  , cuReader :: DwarfReader
+  , cuDwarfContext :: DwarfContext
+  }
+
+-- Decode a non-compilation unit DWARF information entry, its children and its siblings.
+getDieAndSiblings :: DieID -> CUContext -> Get [DIETree]
+getDieAndSiblings parent cuContext =
+  concatSiblings (Just parent) <$> whileJust (getDIEAndDescendants cuContext)
+
+getDIEAndDescendants :: CUContext -> Get (Maybe (DIE, [DIETree]))
+getDIEAndDescendants cuContext = do
   offset <- DieID . fromIntegral <$> Get.bytesRead
   let
     go abbrid = do
       let
-        abbrev         = abbrev_map M.! abbrid
+        abbrev         = cuAbbrevMap cuContext M.! abbrid
         tag            = abbrevTag abbrev
         (attrs, forms) = unzip $ abbrevAttrForms abbrev
-      values          <- mapM (getForm dr str_section cu_offset) forms
+      values          <- mapM (getForm cuContext) forms
       descendants <-
         if abbrevChildren abbrev
-        then getDieAndSiblings offset abbrev_map dr str_section cu_offset
+        then getDieAndSiblings offset cuContext
         else pure []
       pure $
         (DIE offset tag (zip attrs values) dr, descendants)
   traverse go =<< getMAbbrevId
+  where
+    dr = cuReader cuContext
 
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
@@ -1171,7 +1182,15 @@ getDieCus odr abbrev_section str_section =
                         _ -> fail $ "Invalid address size: " ++ show addr_size
     -- TODO: This duplicates getDieAndSiblings
     maybe (fail "Compilation Unit must have a DIE") return =<<
-      getDIEAndDescendants abbrev_map dr str_section cu_offset
+      getDIEAndDescendants CUContext
+        { cuReader = dr
+        , cuAbbrevMap = abbrev_map
+        , cuOffset = cu_offset
+        , cuDwarfContext =
+          DwarfContext
+          { dcStrSection = str_section
+          }
+        }
 
 -- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
 parseDwarfInfo :: Endianess
