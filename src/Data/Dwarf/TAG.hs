@@ -3,6 +3,7 @@ module Data.Dwarf.TAG where
 import Control.Applicative (pure)
 import Data.Binary.Get (Get)
 import Data.Dwarf.Utils
+import Data.Word (Word64)
 
 data DW_TAG
     = DW_TAG_array_type
@@ -62,6 +63,7 @@ data DW_TAG
     | DW_TAG_imported_unit
     | DW_TAG_condition
     | DW_TAG_shared_type
+    | DW_TAG_user Word64 -- index into the user range of tags 0x4080 becomes 0
     deriving (Eq, Ord, Read, Show)
 
 getDW_TAG :: Get DW_TAG
@@ -123,5 +125,5 @@ getDW_TAG = getULEB128 >>= dw_tag
           dw_tag 0x3d = pure DW_TAG_imported_unit
           dw_tag 0x3f = pure DW_TAG_condition
           dw_tag 0x40 = pure DW_TAG_shared_type
-          dw_tag n | 0x4080 <= n && n <= 0xffff = fail $ "User DW_TAG data requires extension of parser for code " ++ show n
+          dw_tag n | 0x4080 <= n && n <= 0xffff = pure . DW_TAG_user $ n - 0x4080
           dw_tag n = fail $ "Unrecognized DW_TAG " ++ show n
