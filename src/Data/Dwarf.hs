@@ -224,7 +224,7 @@ data DW_FORM
     | DW_FORM_ref8                -- ^ reference
     | DW_FORM_ref_udata           -- ^ reference
     | DW_FORM_indirect            -- ^ (see Section 7.5.3 of DWARF3 specification)
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_form :: Word64 -> DW_FORM
 dw_form 0x01 = DW_FORM_addr
 dw_form 0x03 = DW_FORM_block2
@@ -331,7 +331,7 @@ data DW_AT
     | DW_AT_stmt_list            -- ^ lineptr
     | DW_AT_low_pc               -- ^ address
     | DW_AT_high_pc              -- ^ address
-    | DW_AT_language             -- ^ constant
+    | DW_AT_language             -- ^ constant (DW_LANG)
     | DW_AT_discr                -- ^ reference
     | DW_AT_discr_value          -- ^ constant
     | DW_AT_visibility           -- ^ constant
@@ -710,7 +710,7 @@ data DW_LNI
     | DW_LNE_end_sequence
     | DW_LNE_set_address Word64
     | DW_LNE_define_file String Word64 Word64 Word64
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 getDW_LNI :: Reader -> Int64 -> Word8 -> Word8 -> Word64 -> Get DW_LNI
 getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromIntegral <$> getWord8 >>= getDW_LNI_
     where getDW_LNI_ 0x00 = do
@@ -806,7 +806,7 @@ data DW_LNE = DW_LNE
     , lnmEpilogueBegin :: Bool
     , lnmISA           :: Word64
     , lnmFiles         :: [(String, Word64, Word64, Word64)]
-    } deriving (Show, Eq)
+    } deriving (Eq, Ord, Read, Show)
 defaultLNE :: Bool -> [(String, Word64, Word64, Word64)] -> DW_LNE
 defaultLNE is_stmt files = DW_LNE
     { lnmAddress       = 0
@@ -877,7 +877,7 @@ data DW_MACINFO
     | DW_MACINFO_start_file Word64 Word64 -- ^ Marks start of file with the line where the file was included from and a source file index
     | DW_MACINFO_end_file                 -- ^ Marks end of file
     | DW_MACINFO_vendor_ext Word64 String -- ^ Implementation defined
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 
 -- | Retrieves the macro information for a compilation unit from a given substring of the .debug_macinfo section. The offset
 -- into the .debug_macinfo section is obtained from the DW_AT_macro_info attribute of a compilation unit DIE.
@@ -924,7 +924,7 @@ data DW_CFA
     | DW_CFA_val_offset Word64 Word64
     | DW_CFA_val_offset_sf Word64 Int64
     | DW_CFA_val_expression Word64 B.ByteString
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 getDW_CFA :: Reader -> Get DW_CFA
 getDW_CFA dr = do
     tag <- getWord8
@@ -973,7 +973,7 @@ data DW_CIEFDE
         , fdeAddressRange    :: Word64
         , fdeInstructions    :: [DW_CFA]
         }
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
@@ -1134,7 +1134,7 @@ data DIE = DIE
 instance Show DIE where
   show (DIE (DieID i) tag attrs children _) =
     concat $ ["DIE@", show i, " ", show tag, " (", show (length children), " children)"] ++ concat
-    [ [" ", show attr, "=", show val]
+    [ [" ", show attr, "=(", show val, ")"]
     | (attr, val) <- attrs
     ]
 
@@ -1371,7 +1371,7 @@ data DW_OP
     | DW_OP_form_tls_address
     | DW_OP_call_frame_cfa
     | DW_OP_bit_piece Word64 Word64
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 -- | Parse a ByteString into a DWARF opcode. This will be needed for further decoding of DIE attributes.
 parseDW_OP :: Reader -> B.ByteString -> DW_OP
 parseDW_OP dr bs = strictGet (getDW_OP dr) bs
@@ -1548,7 +1548,7 @@ data DW_ATE
     | DW_ATE_signed_fixed
     | DW_ATE_unsigned_fixed
     | DW_ATE_decimal_float
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_ate :: Word64 -> DW_ATE
 dw_ate 0x01 = DW_ATE_address
 dw_ate 0x02 = DW_ATE_boolean
@@ -1573,7 +1573,7 @@ data DW_DS
     | DW_DS_trailing_overpunch
     | DW_DS_leading_separate
     | DW_DS_trailing_separate
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_ds :: Word64 -> DW_DS
 dw_ds 0x01 = DW_DS_unsigned
 dw_ds 0x02 = DW_DS_leading_overpunch
@@ -1586,7 +1586,7 @@ data DW_END
     = DW_END_default
     | DW_END_big
     | DW_END_little
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_end :: Word64 -> DW_END
 dw_end 0x00 = DW_END_default
 dw_end 0x01 = DW_END_big
@@ -1597,7 +1597,7 @@ data DW_ACCESS
     = DW_ACCESS_public
     | DW_ACCESS_protected
     | DW_ACCESS_private
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_access :: Word64 -> DW_ACCESS
 dw_access 0x01 = DW_ACCESS_public
 dw_access 0x02 = DW_ACCESS_protected
@@ -1608,7 +1608,7 @@ data DW_VIS
     = DW_VIS_local
     | DW_VIS_exported
     | DW_VIS_qualified
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_vis :: Word64 -> DW_VIS
 dw_vis 0x01 = DW_VIS_local
 dw_vis 0x02 = DW_VIS_exported
@@ -1619,7 +1619,7 @@ data DW_VIRTUALITY
     = DW_VIRTUALITY_none
     | DW_VIRTUALITY_virtual
     | DW_VIRTUALITY_return_virtual
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_virtuality :: Word64 -> DW_VIRTUALITY
 dw_virtuality 0x00 = DW_VIRTUALITY_none
 dw_virtuality 0x01 = DW_VIRTUALITY_virtual
@@ -1646,7 +1646,7 @@ data DW_LANG
     | DW_LANG_ObjC_plus_plus
     | DW_LANG_UPC
     | DW_LANG_D
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_lang :: Word64 -> DW_LANG
 dw_lang 0x0001 = DW_LANG_C89
 dw_lang 0x0002 = DW_LANG_C
@@ -1674,7 +1674,7 @@ data DW_ID
     | DW_ID_up_case
     | DW_ID_down_case
     | DW_ID_case_insensitive
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_id :: Word64 -> DW_ID
 dw_id 0x00 = DW_ID_case_sensitive
 dw_id 0x01 = DW_ID_up_case
@@ -1686,7 +1686,7 @@ data DW_CC
     = DW_CC_normal
     | DW_CC_program
     | DW_CC_nocall
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_cc :: Word64 -> DW_CC
 dw_cc 0x01 = DW_CC_normal
 dw_cc 0x02 = DW_CC_program
@@ -1698,7 +1698,7 @@ data DW_INL
     | DW_INL_inlined
     | DW_INL_declared_not_inlined
     | DW_INL_declared_inlined
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_inl :: Word64 -> DW_INL
 dw_inl 0x00 = DW_INL_not_inlined
 dw_inl 0x01 = DW_INL_inlined
@@ -1709,7 +1709,7 @@ dw_inl n = error $ "Unrecognized DW_INL " ++ show n
 data DW_ORD
     = DW_ORD_row_major
     | DW_ORD_col_major
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_ord :: Word64 -> DW_ORD
 dw_ord 0x00 = DW_ORD_row_major
 dw_ord 0x01 = DW_ORD_col_major
@@ -1718,7 +1718,7 @@ dw_ord n = error $ "Unrecognized DW_ORD " ++ show n
 data DW_DSC
     = DW_DSC_label
     | DW_DSC_range
-    deriving (Show, Eq)
+    deriving (Eq, Ord, Read, Show)
 dw_dsc :: Word64 -> DW_DSC
 dw_dsc 0x00 = DW_DSC_label
 dw_dsc 0x01 = DW_DSC_range
