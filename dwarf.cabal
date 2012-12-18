@@ -20,4 +20,13 @@ library
                      utf8-string >= 0.3.7
     hs-source-dirs:  src
     exposed-modules: Data.Dwarf
+    other-modules:   Data.Dwarf.Types,
+                     Data.Dwarf.Utils,
+                     Data.Dwarf.Reader,
+                     Data.Dwarf.Form,
+                     Data.Dwarf.LNI,
+                     Data.Dwarf.AT,
+                     Data.Dwarf.OP,
+                     Data.Dwarf.TAG,
+                     Data.Dwarf.CFA
     ghc-options:     -Wall
