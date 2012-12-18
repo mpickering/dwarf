@@ -2,7 +2,7 @@
 -- | Parses the DWARF 2 and DWARF 3 specifications at http://www.dwarfstd.org given
 -- the debug sections in ByteString form.
 module Data.Dwarf
-  ( Endianess(..)
+  ( Endianess(..), TargetSize(..)
   , Sections(..)
   , parseInfo
   , DieID, DIE(..), (!?)
@@ -138,9 +138,9 @@ getNameLookupEntries dr cu_offset =
 -- The headers for "Section 7.19 Name Lookup Table", and "Section 7.20
 -- Address Range Table" are very similar, this is the common format:
 getTableHeader :: TargetSize -> EndianReader -> Get (Reader, CUOffset)
-getTableHeader target64 odr = do
-  (der, _) <- getUnitLength odr
-  let dr = reader target64 der
+getTableHeader target64 der = do
+  (desr, _) <- getUnitLength der
+  let dr = reader target64 desr
   _version <- drGetW16 dr
   cu_offset <- drGetOffset dr
   return (dr, CUOffset cu_offset)
@@ -178,8 +178,8 @@ data Range = Range
 -- Section 7.20 - Address Range Table
 -- Returns the ranges that belong to a CU
 getAddressRangeTable :: TargetSize -> EndianReader -> Get [([Range], CUOffset)]
-getAddressRangeTable target64 odr = getWhileNotEmpty $ do
-  (dr, cu_offset)   <- getTableHeader target64 odr
+getAddressRangeTable target64 der = getWhileNotEmpty $ do
+  (dr, cu_offset)   <- getTableHeader target64 der
   address_size      <- getWord8
   let
     readAddress =
@@ -247,8 +247,8 @@ data DW_CIEFDE
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
     let der    = endianReader endianess
-    (dur, endPos) <- getUnitLength der
-    let dr     = reader target64 dur
+    (desr, endPos) <- getUnitLength der
+    let dr     = reader target64 desr
     cie_id     <- drGetOffset dr
     if cie_id == drLargestOffset dr then do
         version                 <- getWord8
@@ -414,9 +414,9 @@ getDIEAndDescendants cuContext = do
 getCUHeader ::
   EndianReader -> Sections ->
   Get (CUOffset, M.Map AbbrevId DW_ABBREV, Reader)
-getCUHeader odr dwarfSections = do
+getCUHeader der dwarfSections = do
   cu_offset       <- CUOffset . fromIntegral <$> Get.bytesRead
-  (desr, _)       <- getUnitLength odr
+  (desr, _)       <- getUnitLength der
   _version        <- desrGetW16 desr
   abbrev_offset   <- desrGetOffset desr
   let abbrev_map   = M.fromList . map (abbrevId &&& id) .
@@ -432,10 +432,10 @@ getCUHeader odr dwarfSections = do
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
 getDieCus :: EndianReader -> Sections -> DIECollector Get [DIE]
-getDieCus odr dwarfSections =
+getDieCus der dwarfSections =
   withToldRefs Nothing <=<
   whileJust . condAct (lift Get.isEmpty) $ do
-    (cu_offset, abbrev_map, dr) <- lift $ getCUHeader odr dwarfSections
+    (cu_offset, abbrev_map, dr) <- lift $ getCUHeader der dwarfSections
     maybe (fail "Compilation Unit must have a DIE") return =<<
       getDIEAndDescendants CUContext
         { cuReader = dr
@@ -445,9 +445,7 @@ getDieCus odr dwarfSections =
         }
 
 -- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
-parseInfo :: Endianess
-               -> Sections
-               -> ([DIE], DIEMap)  -- ^ The die list is of compilation unit dies
+parseInfo :: Endianess -> Sections -> ([DIE], DIEMap)  -- ^ The die list is of compilation unit dies
 parseInfo endianess dwarfSections =
   strictGet act $ dsInfoSection dwarfSections
   where
