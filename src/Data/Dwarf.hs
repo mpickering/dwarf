@@ -242,6 +242,7 @@ dw_form n    = error $ "Unrecognized DW_FORM " ++ show n
 data DW_ATVAL
     = DW_ATVAL_INT    Int64
     | DW_ATVAL_UINT   Word64
+    | DW_ATVAL_REF    DieID
     | DW_ATVAL_STRING String
     | DW_ATVAL_BLOB   B.ByteString
     | DW_ATVAL_BOOL   Bool
@@ -254,8 +255,8 @@ getByteStringLen lenGetter =
 newtype CUOffset = CUOffset Word64
   deriving (Eq, Ord, Read, Show)
 
-inCU :: Integral a => CUOffset -> a -> Word64
-inCU (CUOffset base) x = base + fromIntegral x
+inCU :: Integral a => CUOffset -> a -> DieID
+inCU (CUOffset base) x = DieID $ base + fromIntegral x
 
 strictGet :: Get a -> B.ByteString -> a
 strictGet action bs = runGet action $ L.fromChunks [bs]
@@ -284,11 +285,11 @@ getForm
     DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
     DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
     DW_FORM_string    -> DW_ATVAL_STRING <$> getUTF8Str0
-    DW_FORM_ref1      -> DW_ATVAL_UINT . inCU cu <$> getWord8
-    DW_FORM_ref2      -> DW_ATVAL_UINT . inCU cu <$> drGetW16 dr
-    DW_FORM_ref4      -> DW_ATVAL_UINT . inCU cu <$> drGetW32 dr
-    DW_FORM_ref8      -> DW_ATVAL_UINT . inCU cu <$> drGetW64 dr
-    DW_FORM_ref_udata -> DW_ATVAL_UINT . inCU cu <$> getULEB128
+    DW_FORM_ref1      -> DW_ATVAL_REF . inCU cu <$> getWord8
+    DW_FORM_ref2      -> DW_ATVAL_REF . inCU cu <$> drGetW16 dr
+    DW_FORM_ref4      -> DW_ATVAL_REF . inCU cu <$> drGetW32 dr
+    DW_FORM_ref8      -> DW_ATVAL_REF . inCU cu <$> drGetW64 dr
+    DW_FORM_ref_udata -> DW_ATVAL_REF . inCU cu <$> getULEB128
     DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetDwarfOffset dr
     DW_FORM_indirect  -> getForm cuContext . dw_form =<< getULEB128
     DW_FORM_strp      -> do
@@ -593,60 +594,75 @@ getNonZeroDwarfOffset dr = do
   pure $ if offset == 0 then Nothing else Just offset
 
 -- Section 7.19 - Name Lookup Tables
--- TODO: Is this Word64 really a CU? It's being passed as a "debug_info_offset"
-getNameLookupEntries :: DwarfReader -> Word64 -> Get [(String, [Word64])]
+getNameLookupEntries :: DwarfReader -> CUOffset -> Get [(String, [DieID])]
 getNameLookupEntries dr cu_offset =
   whileJust $ traverse getEntry =<< getNonZeroDwarfOffset dr
   where
     getEntry die_offset = do
       name <- getUTF8Str0
-      pure (name, [cu_offset + die_offset])
+      pure (name, [inCU cu_offset die_offset])
 
-getDebugInfoOffset :: TargetSize -> DwarfEndianReader -> Get (DwarfReader, Word64)
-getDebugInfoOffset target64 odr = do
-  (der, _)         <- getDwarfUnitLength odr
-  let dr            = dwarfReader target64 der
-  _version          <- drGetW16 dr
-  debug_info_offset <- drGetDwarfOffset dr
-  return (dr, debug_info_offset)
+-- The headers for "Section 7.19 Name Lookup Table", and "Section 7.20
+-- Address Range Table" are very similar, this is the common format:
+getTableHeader :: TargetSize -> DwarfEndianReader -> Get (DwarfReader, CUOffset)
+getTableHeader target64 odr = do
+  (der, _) <- getDwarfUnitLength odr
+  let dr = dwarfReader target64 der
+  _version <- drGetW16 dr
+  cu_offset <- drGetDwarfOffset dr
+  return (dr, CUOffset cu_offset)
 
-getNameLookupTable :: TargetSize -> DwarfEndianReader -> Get [M.Map String [Word64]]
+getNameLookupTable :: TargetSize -> DwarfEndianReader -> Get [M.Map String [DieID]]
 getNameLookupTable target64 odr = getWhileNotEmpty $ do
-  (dr, debug_info_offset) <- getDebugInfoOffset target64 odr
+  (dr, cu_offset) <- getTableHeader target64 odr
   _debug_info_length <- drGetDwarfOffset dr
-  pubNames          <- M.fromListWith (++) <$> getNameLookupEntries dr debug_info_offset
-  pure pubNames
+  M.fromListWith (++) <$> getNameLookupEntries dr cu_offset
 
-parsePubSection :: Endianess -> TargetSize -> B.ByteString -> M.Map String [Word64]
+parsePubSection :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
 parsePubSection endianess target64 section =
   M.unionsWith (++) $ strictGet (getNameLookupTable target64 dr) section
   where
     dr = dwarfEndianReader endianess
 
--- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a debug info id in the DwarfInfo.
-parseDwarfPubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [Word64]
+-- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a DieID
+parseDwarfPubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
 parseDwarfPubnames = parsePubSection
 
--- | Parses the .debug_pubtypes section (as ByteString) into a map from a type name to a debug info id in the DwarfInfo.
-parseDwarfPubtypes :: Endianess -> TargetSize -> B.ByteString -> M.Map String [Word64]
+-- | Parses the .debug_pubtypes section (as ByteString) into a map from a type name to a DieID
+parseDwarfPubtypes :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
 parseDwarfPubtypes = parsePubSection
 
--- Section 7.20 - Address Range Table
-getAddressRangeTable :: TargetSize -> DwarfEndianReader -> Get [([(Word64, Word64)], Word64)]
-getAddressRangeTable target64 odr = getWhileNotEmpty $ do
-  (dr, debug_info_offset) <- getDebugInfoOffset target64 odr
-  address_size      <- fromIntegral <$> getWord8
-  _segment_size     <- getWord8
-  bytes_read        <- Get.bytesRead
-  Get.skip $ fromIntegral (2 * address_size - (bytes_read `mod` (2 * address_size)))
-  address_ranges    <- case address_size of
-                      4 -> whileM (/= (0, 0)) $ (,) <$> (fromIntegral <$> drGetW32 dr) <*> (fromIntegral <$> drGetW32 dr)
-                      8 -> whileM (/= (0, 0)) $ (,) <$> drGetW64 dr <*> drGetW64 dr
-                      n -> fail $ "Unrecognized address size " ++ show n ++ " in .debug_aranges section."
-  pure (address_ranges, debug_info_offset)
+align :: Integral a => a -> Get ()
+align alignment = do
+  pos <- Get.bytesRead
+  Get.skip . fromIntegral $ (-pos) `mod` fromIntegral alignment
 
--- | Parses  the .debug_aranges section (as ByteString) into a map from an address range to a debug info id that indexes the DwarfInfo.
-parseDwarfAranges :: Endianess -> TargetSize -> B.ByteString -> [([(Word64, Word64)], Word64)]
+data Range = Range
+  { rangeBegin :: !Word64
+  , rangeEnd :: !Word64
+  } deriving (Eq, Ord, Read, Show)
+
+-- Section 7.20 - Address Range Table
+-- Returns the ranges that belong to a CU
+getAddressRangeTable :: TargetSize -> DwarfEndianReader -> Get [([Range], CUOffset)]
+getAddressRangeTable target64 odr = getWhileNotEmpty $ do
+  (dr, cu_offset)   <- getTableHeader target64 odr
+  address_size      <- getWord8
+  let
+    readAddress =
+      case address_size of
+        4 -> fromIntegral <$> drGetW32 dr
+        8 -> drGetW64 dr
+        n -> fail $ "Unrecognized address size " ++ show n ++ " in .debug_aranges section."
+  _segment_size     <- getWord8
+  align $ 2 * address_size
+  address_ranges <- whileM (/= Range 0 0) $ Range <$> readAddress <*> readAddress
+  pure (address_ranges, cu_offset)
+
+-- | Parses the .debug_aranges section (as ByteString) into a map from
+-- an address range to a DieID that indexes the DwarfInfo.
+parseDwarfAranges ::
+  Endianess -> TargetSize -> B.ByteString -> [([Range], CUOffset)]
 parseDwarfAranges endianess target64 aranges_section =
     let dr = dwarfEndianReader endianess
     in strictGet (getAddressRangeTable target64 dr) aranges_section
@@ -970,11 +986,6 @@ parseDwarfFrame :: Endianess
                 -> [DW_CIEFDE]
 parseDwarfFrame endianess target64 bs =
   strictGet (getWhileNotEmpty $ getCIEFDE endianess target64) bs
-
-data Range = Range
-  { rangeMBegin :: !Word64
-  , rangeEnd :: !Word64
-  }
 
 newtype RangeEnd = RangeEnd Word64
 
