@@ -42,6 +42,7 @@ import Control.Monad.Trans.Writer (WriterT(..))
 import Data.Binary (Get)
 import Data.Binary.Get (getWord8, getByteString)
 import Data.Dwarf.AT
+import Data.Dwarf.ATE
 import Data.Dwarf.Form
 import Data.Dwarf.LNI
 import Data.Dwarf.OP
