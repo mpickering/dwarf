@@ -1,6 +1,7 @@
+import Control.Monad (void)
 import Distribution.Simple
-import System.Cmd(system)
+import System.Cmd (system)
 
 main = defaultMainWithHooks $ simpleUserHooks { runTests = runElfTests }
 
-runElfTests a b pd lb = system "runhaskell -i./src ./tests/Test.hs" >> return ()
+runElfTests a b pd lb = void $ system "runhaskell -i./src ./tests/Test.hs"

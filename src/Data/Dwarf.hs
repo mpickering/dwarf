@@ -883,7 +883,7 @@ data DW_MACINFO
 -- | Retrieves the macro information for a compilation unit from a given substring of the .debug_macinfo section. The offset
 -- into the .debug_macinfo section is obtained from the DW_AT_macro_info attribute of a compilation unit DIE.
 parseMacInfo :: B.ByteString -> [DW_MACINFO]
-parseMacInfo bs = strictGet getMacInfo bs
+parseMacInfo = strictGet getMacInfo
 
 getMacInfo :: Get [DW_MACINFO]
 getMacInfo = do
@@ -1008,8 +1008,8 @@ parseFrame ::
   Endianess -> TargetSize
   -> B.ByteString -- ^ ByteString for the .debug_frame section.
   -> [DW_CIEFDE]
-parseFrame endianess target64 bs =
-  strictGet (getWhileNotEmpty $ getCIEFDE endianess target64) bs
+parseFrame endianess target64 =
+  strictGet . getWhileNotEmpty $ getCIEFDE endianess target64
 
 newtype RangeEnd = RangeEnd Word64
 
@@ -1018,7 +1018,7 @@ newtype RangeEnd = RangeEnd Word64
 -- into the .debug_ranges section is obtained from the DW_AT_ranges attribute of a compilation unit DIE.
 -- Left results are base address entries. Right results are address ranges.
 parseRanges :: Reader -> B.ByteString -> [Either RangeEnd Range]
-parseRanges dr bs = strictGet (getRanges dr) bs
+parseRanges = strictGet . getRanges
 
 getMRange :: Reader -> Get (Maybe (Either RangeEnd Range))
 getMRange dr = do
@@ -1375,7 +1375,7 @@ data DW_OP
     deriving (Eq, Ord, Read, Show)
 -- | Parse a ByteString into a DWARF opcode. This will be needed for further decoding of DIE attributes.
 parseDW_OP :: Reader -> B.ByteString -> DW_OP
-parseDW_OP dr bs = strictGet (getDW_OP dr) bs
+parseDW_OP = strictGet . getDW_OP
 getDW_OP :: Reader -> Get DW_OP
 getDW_OP dr = getWord8 >>= getDW_OP_
     where getDW_OP_ 0x03 = pure DW_OP_addr <*> drGetTargetAddress dr
