@@ -2,20 +2,25 @@
 -- | Parses the DWARF 2 and DWARF 3 specifications at http://www.dwarfstd.org given
 -- the debug sections in ByteString form.
 module Data.Dwarf
-  ( parseDwarfInfo, Tree(..), DIE(..), DieID, (!?), DwarfReader(..)
+  ( Endianess(..)
+  , Sections(..)
+  , parseInfo
+  , DieID, DIE(..), (!?)
+  , DIERefs(..), DIEMap
+  , Reader(..)
   , infoCompileUnit
-  , parseDwarfAranges
-  , parseDwarfPubnames
-  , parseDwarfPubtypes
-  , Range(..), parseDwarfRanges, parseDwarfLoc
+  , parseAranges
+  , parsePubnames
+  , parsePubtypes
+  , Range(..), parseRanges, parseLoc
   , DW_CFA(..)
-  , DW_MACINFO(..), parseDwarfMacInfo
-  , DW_CIEFDE(..), parseDwarfFrame
+  , DW_MACINFO(..), parseMacInfo
+  , DW_CIEFDE(..), parseFrame
   , DW_OP(..), parseDW_OP
   , DW_TAG(..)
   , DW_AT(..)
   , DW_ATVAL(..)
-  , DW_LNE(..), parseDwarfLine
+  , DW_LNE(..), parseLNE
   , DW_ATE(..), dw_ate
   , DW_DS(..), dw_ds
   , DW_END(..), dw_end
@@ -28,12 +33,13 @@ module Data.Dwarf
   , DW_CC(..), dw_cc
   , DW_ORD(..), dw_ord
   , DW_DSC(..), dw_dsc
-  , Endianess(..)
   ) where
 
-import Control.Applicative (Applicative(..), (<$>))
+import Control.Applicative (Applicative(..), (<$>), (*>), (<$))
 import Control.Arrow ((&&&), (***))
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, (<=<))
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Writer (WriterT(..))
 import Data.Binary (Binary(..), getWord8)
 import Data.Binary.Get (getByteString, getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get, runGet)
 import Data.Bits (Bits, (.&.), (.|.), shiftL, shiftR, clearBit, testBit)
@@ -41,6 +47,7 @@ import Data.Int (Int8, Int16, Int32, Int64)
 import Data.Maybe (listToMaybe)
 import Data.Traversable (traverse)
 import Data.Word (Word8, Word16, Word32, Word64)
+import qualified Control.Monad.Trans.Writer as Writer
 import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
@@ -69,12 +76,15 @@ whileM cond act = whileJust $ do
     then Just res
     else Nothing
 
-getWhileNotEmpty :: Get a -> Get [a]
-getWhileNotEmpty act = whileJust $ do
-  e <- Get.isEmpty
+condAct :: (Applicative m, Monad m) => m Bool -> m a -> m (Maybe a)
+condAct cond act = do
+  e <- cond
   if e
     then pure Nothing
     else Just <$> act
+
+getWhileNotEmpty :: Get a -> Get [a]
+getWhileNotEmpty = whileJust . condAct Get.isEmpty
 
 getUTF8Str0 :: Get String
 getUTF8Str0 = UTF8.toString . B.pack <$> whileM (/= 0) getWord8
@@ -109,87 +119,87 @@ getULEB128 =
 data Endianess = LittleEndian | BigEndian
   deriving (Eq, Ord, Read, Show)
 
+data Encoding = Encoding32 | Encoding64
+  deriving (Eq, Ord, Read, Show)
+
 -- Decode the DWARF size header entry, which specifies both the size of a DWARF subsection and whether this section uses DWARF32 or DWARF64.
-getDwarfUnitLength :: DwarfEndianReader -> Get (DwarfEndianSizeReader, Word64)
-getDwarfUnitLength der = do
+getUnitLength :: EndianReader -> Get (EndianSizeReader, Word64)
+getUnitLength der = do
     size <- derGetW32 der
     if size == 0xffffffff then do
         size64 <- derGetW64 der
         pos <- Get.bytesRead
-        pure (dwarfEndianSizeReader DwarfEncoding64 der, fromIntegral pos + size64)
+        pure (dwarfEndianSizeReader Encoding64 der, fromIntegral pos + size64)
      else
       if size < 0xffffff00 then do
         pos <- Get.bytesRead
-        pure (dwarfEndianSizeReader DwarfEncoding32 der, fromIntegral pos + fromIntegral size)
+        pure (dwarfEndianSizeReader Encoding32 der, fromIntegral pos + fromIntegral size)
       else
         fail $ "Invalid DWARF size: " ++ show size
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- DWARF decoder records.
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
--- Intermediate data structure for a partial DwarfReader.
-data DwarfEndianReader = DwarfEndianReader
+-- Intermediate data structure for a partial Reader.
+data EndianReader = EndianReader
   { derEndianess :: Endianess
   , derGetW16 :: Get Word16
   , derGetW32 :: Get Word32
   , derGetW64 :: Get Word64
   }
-dwarfEndianReader :: Endianess -> DwarfEndianReader
-dwarfEndianReader LittleEndian = DwarfEndianReader LittleEndian getWord16le getWord32le getWord64le
-dwarfEndianReader BigEndian    = DwarfEndianReader BigEndian    getWord16be getWord32be getWord64be
+dwarfEndianReader :: Endianess -> EndianReader
+dwarfEndianReader LittleEndian = EndianReader LittleEndian getWord16le getWord32le getWord64le
+dwarfEndianReader BigEndian    = EndianReader BigEndian    getWord16be getWord32be getWord64be
 
-instance Show DwarfEndianReader where
-  show der = "DwarfEndianReader " ++ show (derEndianess der)
+instance Show EndianReader where
+  show der = "EndianReader " ++ show (derEndianess der)
 
-data DwarfEncoding = DwarfEncoding32 | DwarfEncoding64
-  deriving (Eq, Ord, Read, Show)
-
--- Intermediate data structure for a partial DwarfReader.
-data DwarfEndianSizeReader = DwarfEndianSizeReader
-  { desrEndianReader :: DwarfEndianReader
-  , desrEncoding :: DwarfEncoding
+-- Intermediate data structure for a partial Reader.
+data EndianSizeReader = EndianSizeReader
+  { desrEndianReader :: EndianReader
+  , desrEncoding :: Encoding
   , desrLargestOffset :: Word64
-  , desrGetDwarfOffset :: Get Word64
+  , desrGetOffset :: Get Word64
   }
-dwarfEndianSizeReader :: DwarfEncoding -> DwarfEndianReader -> DwarfEndianSizeReader
-dwarfEndianSizeReader DwarfEncoding64 der = DwarfEndianSizeReader der DwarfEncoding64 0xffffffffffffffff (derGetW64 der)
-dwarfEndianSizeReader DwarfEncoding32 der = DwarfEndianSizeReader der DwarfEncoding32 0xffffffff (fromIntegral <$> derGetW32 der)
+dwarfEndianSizeReader :: Encoding -> EndianReader -> EndianSizeReader
+dwarfEndianSizeReader Encoding64 der = EndianSizeReader der Encoding64 0xffffffffffffffff (derGetW64 der)
+dwarfEndianSizeReader Encoding32 der = EndianSizeReader der Encoding32 0xffffffff (fromIntegral <$> derGetW32 der)
 
-instance Show DwarfEndianSizeReader where
-    show desr = "DwarfEndianSizeReader " ++ show (desrEndianReader desr) ++ " " ++ show (desrEncoding desr)
+instance Show EndianSizeReader where
+    show desr = "EndianSizeReader " ++ show (desrEndianReader desr) ++ " " ++ show (desrEncoding desr)
 
 data TargetSize = TargetSize32 | TargetSize64
   deriving (Eq, Ord, Read, Show)
 
 -- | Type containing functions and data needed for decoding DWARF information.
-data DwarfReader = DwarfReader
-    { drDesr                  :: DwarfEndianSizeReader
+data Reader = Reader
+    { drDesr                  :: EndianSizeReader
     , drTarget64              :: TargetSize
     , drLargestTargetAddress  :: Word64     -- ^ Largest permissible target address.
-    , drGetDwarfTargetAddress :: Get Word64 -- ^ Action for reading a pointer for the target machine.
+    , drGetTargetAddress :: Get Word64 -- ^ Action for reading a pointer for the target machine.
     }
-instance Show DwarfReader where
-    show dr = "DwarfReader " ++ show (drDesr dr) ++ " " ++ show (drTarget64 dr)
+instance Show Reader where
+    show dr = "Reader " ++ show (drDesr dr) ++ " " ++ show (drTarget64 dr)
 
-dwarfReader :: TargetSize -> DwarfEndianSizeReader -> DwarfReader
-dwarfReader TargetSize64 desr = DwarfReader desr TargetSize64 0xffffffffffffffff (desrGetW64 desr)
-dwarfReader TargetSize32 desr = DwarfReader desr TargetSize32 0xffffffff         $ fromIntegral <$> desrGetW32 desr
+dwarfReader :: TargetSize -> EndianSizeReader -> Reader
+dwarfReader TargetSize64 desr = Reader desr TargetSize64 0xffffffffffffffff (desrGetW64 desr)
+dwarfReader TargetSize32 desr = Reader desr TargetSize32 0xffffffff         $ fromIntegral <$> desrGetW32 desr
 
-desrGetW16 :: DwarfEndianSizeReader -> Get Word16
+desrGetW16 :: EndianSizeReader -> Get Word16
 desrGetW16 = derGetW16 . desrEndianReader
-desrGetW32 :: DwarfEndianSizeReader -> Get Word32
+desrGetW32 :: EndianSizeReader -> Get Word32
 desrGetW32 = derGetW32 . desrEndianReader
-desrGetW64 :: DwarfEndianSizeReader -> Get Word64
+desrGetW64 :: EndianSizeReader -> Get Word64
 desrGetW64 = derGetW64 . desrEndianReader
-drGetW16 :: DwarfReader -> Get Word16
+drGetW16 :: Reader -> Get Word16
 drGetW16 = desrGetW16 . drDesr
-drGetW32 :: DwarfReader -> Get Word32
+drGetW32 :: Reader -> Get Word32
 drGetW32 = desrGetW32 . drDesr
-drGetW64 :: DwarfReader -> Get Word64
+drGetW64 :: Reader -> Get Word64
 drGetW64 = desrGetW64 . drDesr
-drGetDwarfOffset :: DwarfReader -> Get Word64
-drGetDwarfOffset = desrGetDwarfOffset . drDesr
-drLargestOffset :: DwarfReader -> Word64
+drGetOffset :: Reader -> Get Word64
+drGetOffset = desrGetOffset . drDesr
+drLargestOffset :: Reader -> Word64
 drLargestOffset = desrLargestOffset . drDesr
 
 data DW_FORM
@@ -262,17 +272,30 @@ strictGet :: Get a -> B.ByteString -> a
 strictGet action bs = runGet action $ L.fromChunks [bs]
 
 getAt :: Get a -> Word64 -> B.ByteString -> a
-getAt action offset = strictGet $ Get.skip (fromIntegral offset) >> action
+getAt action offset = strictGet $ Get.skip (fromIntegral offset) *> action
+
+data Sections = Sections
+  { dsInfoSection :: B.ByteString
+  , dsAbbrevSection :: B.ByteString
+  , dsStrSection :: B.ByteString
+  }
+
+data CUContext = CUContext
+  { cuOffset :: CUOffset
+  , cuAbbrevMap :: M.Map AbbrevId DW_ABBREV
+  , cuReader :: Reader
+  , cuSections :: Sections
+  }
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 -- Abbreviation and form parsing
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 getForm :: CUContext -> DW_FORM -> Get DW_ATVAL
 getForm
-  cuContext@CUContext { cuReader = dr, cuOffset = cu, cuDwarfContext = dc }
+  cuContext@CUContext { cuReader = dr, cuOffset = cu, cuSections = dc }
   form
   = case form of
-    DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetDwarfTargetAddress dr
+    DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetTargetAddress dr
     DW_FORM_block1    -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
     DW_FORM_block2    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW16 dr)
     DW_FORM_block4    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW32 dr)
@@ -290,12 +313,12 @@ getForm
     DW_FORM_ref4      -> DW_ATVAL_REF . inCU cu <$> drGetW32 dr
     DW_FORM_ref8      -> DW_ATVAL_REF . inCU cu <$> drGetW64 dr
     DW_FORM_ref_udata -> DW_ATVAL_REF . inCU cu <$> getULEB128
-    DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetDwarfOffset dr
+    DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetOffset dr
     DW_FORM_indirect  -> getForm cuContext . dw_form =<< getULEB128
     DW_FORM_strp      -> do
-      offset <- fromIntegral <$> drGetDwarfOffset dr
+      offset <- fromIntegral <$> drGetOffset dr
       pure . DW_ATVAL_STRING .
-        getAt getUTF8Str0 offset $ dcStrSection dc
+        getAt getUTF8Str0 offset $ dsStrSection dc
 
 data DW_AT
     = DW_AT_sibling              -- ^ reference
@@ -588,15 +611,15 @@ infoCompileUnit infoSection offset =
     0xffffffff -> offset + 23
     _ -> offset + 11
 
-getNonZeroDwarfOffset :: DwarfReader -> Get (Maybe Word64)
-getNonZeroDwarfOffset dr = do
-  offset <- drGetDwarfOffset dr
+getNonZeroOffset :: Reader -> Get (Maybe Word64)
+getNonZeroOffset dr = do
+  offset <- drGetOffset dr
   pure $ if offset == 0 then Nothing else Just offset
 
 -- Section 7.19 - Name Lookup Tables
-getNameLookupEntries :: DwarfReader -> CUOffset -> Get [(String, [DieID])]
+getNameLookupEntries :: Reader -> CUOffset -> Get [(String, [DieID])]
 getNameLookupEntries dr cu_offset =
-  whileJust $ traverse getEntry =<< getNonZeroDwarfOffset dr
+  whileJust $ traverse getEntry =<< getNonZeroOffset dr
   where
     getEntry die_offset = do
       name <- getUTF8Str0
@@ -604,18 +627,18 @@ getNameLookupEntries dr cu_offset =
 
 -- The headers for "Section 7.19 Name Lookup Table", and "Section 7.20
 -- Address Range Table" are very similar, this is the common format:
-getTableHeader :: TargetSize -> DwarfEndianReader -> Get (DwarfReader, CUOffset)
+getTableHeader :: TargetSize -> EndianReader -> Get (Reader, CUOffset)
 getTableHeader target64 odr = do
-  (der, _) <- getDwarfUnitLength odr
+  (der, _) <- getUnitLength odr
   let dr = dwarfReader target64 der
   _version <- drGetW16 dr
-  cu_offset <- drGetDwarfOffset dr
+  cu_offset <- drGetOffset dr
   return (dr, CUOffset cu_offset)
 
-getNameLookupTable :: TargetSize -> DwarfEndianReader -> Get [M.Map String [DieID]]
+getNameLookupTable :: TargetSize -> EndianReader -> Get [M.Map String [DieID]]
 getNameLookupTable target64 odr = getWhileNotEmpty $ do
   (dr, cu_offset) <- getTableHeader target64 odr
-  _debug_info_length <- drGetDwarfOffset dr
+  _debug_info_length <- drGetOffset dr
   M.fromListWith (++) <$> getNameLookupEntries dr cu_offset
 
 parsePubSection :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
@@ -625,12 +648,12 @@ parsePubSection endianess target64 section =
     dr = dwarfEndianReader endianess
 
 -- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a DieID
-parseDwarfPubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
-parseDwarfPubnames = parsePubSection
+parsePubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
+parsePubnames = parsePubSection
 
 -- | Parses the .debug_pubtypes section (as ByteString) into a map from a type name to a DieID
-parseDwarfPubtypes :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
-parseDwarfPubtypes = parsePubSection
+parsePubtypes :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
+parsePubtypes = parsePubSection
 
 align :: Integral a => a -> Get ()
 align alignment = do
@@ -644,7 +667,7 @@ data Range = Range
 
 -- Section 7.20 - Address Range Table
 -- Returns the ranges that belong to a CU
-getAddressRangeTable :: TargetSize -> DwarfEndianReader -> Get [([Range], CUOffset)]
+getAddressRangeTable :: TargetSize -> EndianReader -> Get [([Range], CUOffset)]
 getAddressRangeTable target64 odr = getWhileNotEmpty $ do
   (dr, cu_offset)   <- getTableHeader target64 odr
   address_size      <- getWord8
@@ -660,10 +683,10 @@ getAddressRangeTable target64 odr = getWhileNotEmpty $ do
   pure (address_ranges, cu_offset)
 
 -- | Parses the .debug_aranges section (as ByteString) into a map from
--- an address range to a DieID that indexes the DwarfInfo.
-parseDwarfAranges ::
+-- an address range to a DieID that indexes the Info.
+parseAranges ::
   Endianess -> TargetSize -> B.ByteString -> [([Range], CUOffset)]
-parseDwarfAranges endianess target64 aranges_section =
+parseAranges endianess target64 aranges_section =
     let dr = dwarfEndianReader endianess
     in strictGet (getAddressRangeTable target64 dr) aranges_section
 
@@ -688,14 +711,14 @@ data DW_LNI
     | DW_LNE_set_address Word64
     | DW_LNE_define_file String Word64 Word64 Word64
     deriving (Show, Eq)
-getDW_LNI :: DwarfReader -> Int64 -> Word8 -> Word8 -> Word64 -> Get DW_LNI
+getDW_LNI :: Reader -> Int64 -> Word8 -> Word8 -> Word64 -> Get DW_LNI
 getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromIntegral <$> getWord8 >>= getDW_LNI_
     where getDW_LNI_ 0x00 = do
             rest <- getByteStringLen getULEB128
             pure $ strictGet getDW_LNE rest
                 where getDW_LNE = getWord8 >>= getDW_LNE_
                       getDW_LNE_ 0x01 = pure DW_LNE_end_sequence
-                      getDW_LNE_ 0x02 = pure DW_LNE_set_address <*> drGetDwarfTargetAddress dr
+                      getDW_LNE_ 0x02 = pure DW_LNE_set_address <*> drGetTargetAddress dr
                       getDW_LNE_ 0x03 = pure DW_LNE_define_file <*> getUTF8Str0 <*> getULEB128 <*> getULEB128 <*> getULEB128
                       getDW_LNE_ n | 0x80 <= n && n <= 0xff = fail $ "User DW_LNE data requires extension of parser for code " ++ show n
                       getDW_LNE_ n = fail $ "Unexpected DW_LNE code " ++ show n
@@ -815,16 +838,16 @@ getDebugLineFileNames = whileJust $ traverse entry =<< getNonEmptyUTF8Str0
 
 -- | Retrieves the line information for a DIE from a given substring of the .debug_line section. The offset
 -- into the .debug_line section is obtained from the DW_AT_stmt_list attribute of a DIE.
-parseDwarfLine :: Endianess -> TargetSize -> B.ByteString -> ([String], [DW_LNE])
-parseDwarfLine endianess target64 bs =
+parseLNE :: Endianess -> TargetSize -> B.ByteString -> ([String], [DW_LNE])
+parseLNE endianess target64 bs =
     let dr = dwarfEndianReader endianess
-    in strictGet (getDwarfLine target64 dr) bs
-getDwarfLine :: TargetSize -> DwarfEndianReader -> Get ([String], [DW_LNE])
-getDwarfLine target64 der = do
-    (desr, endPos)             <- getDwarfUnitLength der
+    in strictGet (getLNE target64 dr) bs
+getLNE :: TargetSize -> EndianReader -> Get ([String], [DW_LNE])
+getLNE target64 der = do
+    (desr, endPos)             <- getUnitLength der
     let dr                      = dwarfReader target64 desr
     _version                   <- drGetW16 dr
-    _header_length             <- drGetDwarfOffset dr
+    _header_length             <- drGetOffset dr
     minimum_instruction_length <- getWord8
     default_is_stmt            <- (/= 0) <$> getWord8
     line_base                  <- get :: Get Int8
@@ -858,19 +881,19 @@ data DW_MACINFO
 
 -- | Retrieves the macro information for a compilation unit from a given substring of the .debug_macinfo section. The offset
 -- into the .debug_macinfo section is obtained from the DW_AT_macro_info attribute of a compilation unit DIE.
-parseDwarfMacInfo :: B.ByteString -> [DW_MACINFO]
-parseDwarfMacInfo bs = strictGet getDwarfMacInfo bs
+parseMacInfo :: B.ByteString -> [DW_MACINFO]
+parseMacInfo bs = strictGet getMacInfo bs
 
-getDwarfMacInfo :: Get [DW_MACINFO]
-getDwarfMacInfo = do
+getMacInfo :: Get [DW_MACINFO]
+getMacInfo = do
     x <- getWord8
     case x of
         0x00 -> pure []
-        0x01 -> pure (:) <*> (pure DW_MACINFO_define     <*> getULEB128 <*> getUTF8Str0) <*> getDwarfMacInfo
-        0x02 -> pure (:) <*> (pure DW_MACINFO_undef      <*> getULEB128 <*> getUTF8Str0) <*> getDwarfMacInfo
-        0x03 -> pure (:) <*> (pure DW_MACINFO_start_file <*> getULEB128 <*> getULEB128)              <*> getDwarfMacInfo
-        0x04 -> pure (:) <*>  pure DW_MACINFO_end_file                                               <*> getDwarfMacInfo
-        0xff -> pure (:) <*> (pure DW_MACINFO_vendor_ext <*> getULEB128 <*> getUTF8Str0) <*> getDwarfMacInfo
+        0x01 -> pure (:) <*> (pure DW_MACINFO_define     <*> getULEB128 <*> getUTF8Str0) <*> getMacInfo
+        0x02 -> pure (:) <*> (pure DW_MACINFO_undef      <*> getULEB128 <*> getUTF8Str0) <*> getMacInfo
+        0x03 -> pure (:) <*> (pure DW_MACINFO_start_file <*> getULEB128 <*> getULEB128)  <*> getMacInfo
+        0x04 -> pure (:) <*>  pure DW_MACINFO_end_file                                   <*> getMacInfo
+        0xff -> pure (:) <*> (pure DW_MACINFO_vendor_ext <*> getULEB128 <*> getUTF8Str0) <*> getMacInfo
         _ -> fail $ "Invalid MACINFO id: " ++ show x
 
 -- Section 7.22 - Call Frame
@@ -902,7 +925,7 @@ data DW_CFA
     | DW_CFA_val_offset_sf Word64 Int64
     | DW_CFA_val_expression Word64 B.ByteString
     deriving (Show, Eq)
-getDW_CFA :: DwarfReader -> Get DW_CFA
+getDW_CFA :: Reader -> Get DW_CFA
 getDW_CFA dr = do
     tag <- getWord8
     case tag `shiftR` 6 of
@@ -911,7 +934,7 @@ getDW_CFA dr = do
         0x3 -> pure $ DW_CFA_restore $ tag .&. 0x3f
         0x0 -> case tag .&. 0x3f of
             0x00 -> pure DW_CFA_nop
-            0x01 -> pure DW_CFA_set_loc <*> drGetDwarfTargetAddress dr
+            0x01 -> pure DW_CFA_set_loc <*> drGetTargetAddress dr
             0x02 -> pure DW_CFA_advance_loc1 <*> getWord8
             0x03 -> pure DW_CFA_advance_loc2 <*> drGetW16 dr
             0x04 -> pure DW_CFA_advance_loc4 <*> drGetW32 dr
@@ -955,9 +978,9 @@ data DW_CIEFDE
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
     let der    = dwarfEndianReader endianess
-    (dur, endPos) <- getDwarfUnitLength der
+    (dur, endPos) <- getUnitLength der
     let dr     = dwarfReader target64 dur
-    cie_id     <- drGetDwarfOffset dr
+    cie_id     <- drGetOffset dr
     if cie_id == drLargestOffset dr then do
         version                 <- getWord8
         augmentation            <- getUTF8Str0
@@ -972,19 +995,19 @@ getCIEFDE endianess target64 = do
         let initial_instructions = strictGet (getWhileNotEmpty (getDW_CFA dr)) raw_instructions
         pure $ DW_CIE augmentation code_alignment_factor data_alignment_factor return_address_register initial_instructions
      else do
-        initial_location        <- drGetDwarfTargetAddress dr
-        address_range           <- drGetDwarfTargetAddress dr
+        initial_location        <- drGetTargetAddress dr
+        address_range           <- drGetTargetAddress dr
         curPos                  <- fromIntegral <$> Get.bytesRead
         raw_instructions        <- getByteString $ fromIntegral (endPos - curPos)
         let instructions        = strictGet (getWhileNotEmpty (getDW_CFA dr)) raw_instructions
         pure $ DW_FDE cie_id initial_location address_range instructions
 
 -- | Parse the .debug_frame section into a list of DW_CIEFDE records.
-parseDwarfFrame :: Endianess
-                -> TargetSize
-                -> B.ByteString -- ^ ByteString for the .debug_frame section.
-                -> [DW_CIEFDE]
-parseDwarfFrame endianess target64 bs =
+parseFrame ::
+  Endianess -> TargetSize
+  -> B.ByteString -- ^ ByteString for the .debug_frame section.
+  -> [DW_CIEFDE]
+parseFrame endianess target64 bs =
   strictGet (getWhileNotEmpty $ getCIEFDE endianess target64) bs
 
 newtype RangeEnd = RangeEnd Word64
@@ -993,13 +1016,13 @@ newtype RangeEnd = RangeEnd Word64
 -- | Retrieves the non-contiguous address ranges for a compilation unit from a given substring of the .debug_ranges section. The offset
 -- into the .debug_ranges section is obtained from the DW_AT_ranges attribute of a compilation unit DIE.
 -- Left results are base address entries. Right results are address ranges.
-parseDwarfRanges :: DwarfReader -> B.ByteString -> [Either RangeEnd Range]
-parseDwarfRanges dr bs = strictGet (getDwarfRanges dr) bs
+parseRanges :: Reader -> B.ByteString -> [Either RangeEnd Range]
+parseRanges dr bs = strictGet (getRanges dr) bs
 
-getMRange :: DwarfReader -> Get (Maybe (Either RangeEnd Range))
+getMRange :: Reader -> Get (Maybe (Either RangeEnd Range))
 getMRange dr = do
-  begin <- drGetDwarfTargetAddress dr
-  end   <- drGetDwarfTargetAddress dr
+  begin <- drGetTargetAddress dr
+  end   <- drGetTargetAddress dr
   pure $
     if begin == 0 && end == 0
     then Nothing
@@ -1008,18 +1031,18 @@ getMRange dr = do
       then Left $ RangeEnd end
       else Right $ Range begin end
 
-getDwarfRanges :: DwarfReader -> Get [Either RangeEnd Range]
-getDwarfRanges dr = whileJust $ getMRange dr
+getRanges :: Reader -> Get [Either RangeEnd Range]
+getRanges dr = whileJust $ getMRange dr
 
 -- Section 7.7.3
 -- | Retrieves the location list expressions from a given substring of the .debug_loc section. The offset
 -- into the .debug_loc section is obtained from an attribute of class loclistptr for a given DIE.
 -- Left results are base address entries. Right results are address ranges and a location expression.
-parseDwarfLoc :: DwarfReader -> B.ByteString -> [Either RangeEnd (Range, B.ByteString)]
-parseDwarfLoc dr = strictGet (getDwarfLoc dr)
+parseLoc :: Reader -> B.ByteString -> [Either RangeEnd (Range, B.ByteString)]
+parseLoc dr = strictGet (getLoc dr)
 
-getDwarfLoc :: DwarfReader -> Get [Either RangeEnd (Range, B.ByteString)]
-getDwarfLoc dr = whileJust $ traverse mkRange =<< getMRange dr
+getLoc :: Reader -> Get [Either RangeEnd (Range, B.ByteString)]
+getLoc dr = whileJust $ traverse mkRange =<< getMRange dr
   where
     mkRange (Left end) = pure $ Left end
     mkRange (Right range) =
@@ -1085,17 +1108,18 @@ data DW_TAG
     | DW_TAG_shared_type
     deriving (Eq, Ord, Read, Show)
 
-data Tree ptr a = Tree
-  { treeParent       :: Maybe ptr        -- ^ Unique identifier of this entry's parent.
-  , treeSiblingLeft  :: Maybe ptr        -- ^ Unique identifier of the left sibling in the DIE tree, if one exists.
-  , treeSiblingRight :: Maybe ptr        -- ^ Unique identifier of the right sibling in the DIE tree, if one exists.
-  , treeData :: a
-  } deriving (Eq, Ord, Read, Show)
+data DIERefs = DIERefs
+  { dieRefsParent       :: Maybe DieID   -- ^ Unique identifier of this entry's parent.
+  , dieRefsSiblingLeft  :: Maybe DieID   -- ^ Unique identifier of the left sibling
+  , dieRefsSiblingRight :: Maybe DieID   -- ^ Unique identifier of the right sibling
+  , dieRefsDIE :: DIE
+  } deriving (Show)
+
+type DIEMap = M.Map DieID DIERefs
+type DIECollector = WriterT DIEMap
 
 newtype DieID = DieID Word64
   deriving (Eq, Ord, Read, Show)
-
-type DIETree = Tree DieID DIE
 
 -- | The dwarf information entries form a graph of nodes tagged with attributes. Please refer to the DWARF specification
 -- for semantics. Although it looks like a tree, there can be attributes which have adjacency information which will
@@ -1104,97 +1128,95 @@ data DIE = DIE
     { dieId         :: DieID              -- ^ Unique identifier for this entry.
     , dieTag        :: DW_TAG              -- ^ Type tag.
     , dieAttributes :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
-    , dieChildren   :: [DIETree]
-    , dieReader     :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
+    , dieChildren   :: [DIE]
+    , dieReader     :: Reader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     }
 instance Show DIE where
   show (DIE (DieID i) tag attrs children _) =
-    unwords $ ["DIE", show i, show tag, "(", show (length children), "children)"] ++ concat
-    [ [show attr, "=", show val]
+    concat $ ["DIE@", show i, " ", show tag, " (", show (length children), " children)"] ++ concat
+    [ [" ", show attr, "=", show val]
     | (attr, val) <- attrs
     ]
 
-intoTree :: Maybe DieID -> [DIE] -> [DIETree]
-intoTree mParent = go Nothing
+addRefs :: Maybe DieID -> [DIE] -> [DIERefs]
+addRefs mParent = go Nothing
   where
     go _lSibling [] = []
     go lSibling (die : xs) =
-      Tree mParent lSibling (dieId <$> listToMaybe xs) die :
+      DIERefs mParent lSibling (dieId <$> listToMaybe xs) die :
       go (Just (dieId die)) xs
 
-newtype DwarfContext = DwarfContext
-  { dcStrSection :: B.ByteString
-  }
-
-data CUContext = CUContext
-  { cuOffset :: CUOffset
-  , cuAbbrevMap :: M.Map AbbrevId DW_ABBREV
-  , cuReader :: DwarfReader
-  , cuDwarfContext :: DwarfContext
-  }
+withToldRefs :: (Applicative m, Monad m) => Maybe DieID -> [DIE] -> DIECollector m [DIE]
+withToldRefs mParent dies =
+  dies <$
+  (Writer.tell . M.fromList . map (dieId . dieRefsDIE &&& id) . addRefs mParent) dies
 
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
-getDieAndSiblings :: DieID -> CUContext -> Get [DIETree]
+getDieAndSiblings :: DieID -> CUContext -> DIECollector Get [DIE]
 getDieAndSiblings parent cuContext =
-  intoTree (Just parent) <$> whileJust (getDIEAndDescendants cuContext)
+  withToldRefs (Just parent) =<< (whileJust . getDIEAndDescendants) cuContext
 
-getDIEAndDescendants :: CUContext -> Get (Maybe DIE)
+getDIEAndDescendants :: CUContext -> DIECollector Get (Maybe DIE)
 getDIEAndDescendants cuContext = do
-  offset <- DieID . fromIntegral <$> Get.bytesRead
+  offset <- lift $ DieID . fromIntegral <$> Get.bytesRead
   let
     go abbrid = do
       let
         abbrev         = cuAbbrevMap cuContext M.! abbrid
         tag            = abbrevTag abbrev
         (attrs, forms) = unzip $ abbrevAttrForms abbrev
-      values          <- mapM (getForm cuContext) forms
+      values          <- lift $ mapM (getForm cuContext) forms
       children <-
         if abbrevChildren abbrev
         then getDieAndSiblings offset cuContext
         else pure []
       pure $ DIE offset tag (zip attrs values) children dr
-  traverse go =<< getMAbbrevId
+  traverse go =<< lift getMAbbrevId
   where
     dr = cuReader cuContext
 
+getCUHeader ::
+  EndianReader -> Sections ->
+  Get (CUOffset, M.Map AbbrevId DW_ABBREV, Reader)
+getCUHeader odr dwarfSections = do
+  cu_offset       <- CUOffset . fromIntegral <$> Get.bytesRead
+  (desr, _)       <- getUnitLength odr
+  _version        <- desrGetW16 desr
+  abbrev_offset   <- desrGetOffset desr
+  let abbrev_map   = M.fromList . map (abbrevId &&& id) .
+                     getAt getAbbrevList abbrev_offset $
+                     dsAbbrevSection dwarfSections
+  addr_size       <- getWord8
+  dr              <- case addr_size of
+                      4 -> pure $ dwarfReader TargetSize32 desr
+                      8 -> pure $ dwarfReader TargetSize64 desr
+                      _ -> fail $ "Invalid address size: " ++ show addr_size
+  return (cu_offset, abbrev_map, dr)
+
 -- TODO: Why not return CUs rather than DIE's?
 -- Decode the compilation unit DWARF information entries.
-getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIETree]
-getDieCus odr abbrev_section str_section =
-  fmap (intoTree Nothing) .
-  getWhileNotEmpty $ do
-    cu_offset       <- CUOffset . fromIntegral <$> Get.bytesRead
-    (desr, _)       <- getDwarfUnitLength odr
-    _version        <- desrGetW16 desr
-    abbrev_offset   <- desrGetDwarfOffset desr
-    let abbrev_map   = M.fromList . map (abbrevId &&& id) $
-                       getAt getAbbrevList abbrev_offset abbrev_section
-    addr_size       <- getWord8
-    dr              <- case addr_size of
-                        4 -> pure $ dwarfReader TargetSize32 desr
-                        8 -> pure $ dwarfReader TargetSize64 desr
-                        _ -> fail $ "Invalid address size: " ++ show addr_size
+getDieCus :: EndianReader -> Sections -> DIECollector Get [DIE]
+getDieCus odr dwarfSections =
+  withToldRefs Nothing <=<
+  whileJust . condAct (lift Get.isEmpty) $ do
+    (cu_offset, abbrev_map, dr) <- lift $ getCUHeader odr dwarfSections
     maybe (fail "Compilation Unit must have a DIE") return =<<
       getDIEAndDescendants CUContext
         { cuReader = dr
         , cuAbbrevMap = abbrev_map
         , cuOffset = cu_offset
-        , cuDwarfContext =
-          DwarfContext
-          { dcStrSection = str_section
-          }
+        , cuSections = dwarfSections
         }
 
 -- | Parses the .debug_info section (as ByteString) using the .debug_abbrev and .debug_str sections.
-parseDwarfInfo :: Endianess
-               -> B.ByteString     -- ^ ByteString for the .debug_info section.
-               -> B.ByteString     -- ^ ByteString for the .debug_abbrev section.
-               -> B.ByteString     -- ^ ByteString for the .debug_str section.
-               -> M.Map DieID DIETree -- ^ A map from the unique ids to their corresponding DWARF information entries.
-parseDwarfInfo endianess info_section abbrev_section str_section =
-    let dr = dwarfEndianReader endianess
-        di = strictGet (getDieCus dr abbrev_section str_section) info_section
-    in M.fromList $ map (dieId . treeData &&& id) di
+parseInfo :: Endianess
+               -> Sections
+               -> ([DIE], DIEMap)  -- ^ The die list is of compilation unit dies
+parseInfo endianess dwarfSections =
+  strictGet act $ dsInfoSection dwarfSections
+  where
+    act = runWriterT $ getDieCus dr dwarfSections
+    dr = dwarfEndianReader endianess
 
 data DW_OP
     = DW_OP_addr Word64
@@ -1351,11 +1373,11 @@ data DW_OP
     | DW_OP_bit_piece Word64 Word64
     deriving (Show, Eq)
 -- | Parse a ByteString into a DWARF opcode. This will be needed for further decoding of DIE attributes.
-parseDW_OP :: DwarfReader -> B.ByteString -> DW_OP
+parseDW_OP :: Reader -> B.ByteString -> DW_OP
 parseDW_OP dr bs = strictGet (getDW_OP dr) bs
-getDW_OP :: DwarfReader -> Get DW_OP
+getDW_OP :: Reader -> Get DW_OP
 getDW_OP dr = getWord8 >>= getDW_OP_
-    where getDW_OP_ 0x03 = pure DW_OP_addr <*> drGetDwarfTargetAddress dr
+    where getDW_OP_ 0x03 = pure DW_OP_addr <*> drGetTargetAddress dr
           getDW_OP_ 0x06 = pure DW_OP_deref
           getDW_OP_ 0x08 = pure DW_OP_const1u <*> fromIntegral <$> getWord8
           getDW_OP_ 0x09 = pure DW_OP_const1s <*> fromIntegral <$> getWord8
@@ -1503,7 +1525,7 @@ getDW_OP dr = getWord8 >>= getDW_OP_
           getDW_OP_ 0x97 = pure DW_OP_push_object_address
           getDW_OP_ 0x98 = pure DW_OP_call2 <*> drGetW16 dr
           getDW_OP_ 0x99 = pure DW_OP_call4 <*> drGetW32 dr
-          getDW_OP_ 0x9a = pure DW_OP_call_ref <*> drGetDwarfTargetAddress dr
+          getDW_OP_ 0x9a = pure DW_OP_call_ref <*> drGetTargetAddress dr
           getDW_OP_ 0x9b = pure DW_OP_form_tls_address
           getDW_OP_ 0x9c = pure DW_OP_call_frame_cfa
           getDW_OP_ 0x9d = pure DW_OP_bit_piece <*> getULEB128 <*> getULEB128
