@@ -129,11 +129,11 @@ getUnitLength der = do
     if size == 0xffffffff then do
         size64 <- derGetW64 der
         pos <- Get.bytesRead
-        pure (dwarfEndianSizeReader Encoding64 der, fromIntegral pos + size64)
+        pure (endianSizeReader Encoding64 der, fromIntegral pos + size64)
      else
       if size < 0xffffff00 then do
         pos <- Get.bytesRead
-        pure (dwarfEndianSizeReader Encoding32 der, fromIntegral pos + fromIntegral size)
+        pure (endianSizeReader Encoding32 der, fromIntegral pos + fromIntegral size)
       else
         fail $ "Invalid DWARF size: " ++ show size
 
@@ -147,9 +147,9 @@ data EndianReader = EndianReader
   , derGetW32 :: Get Word32
   , derGetW64 :: Get Word64
   }
-dwarfEndianReader :: Endianess -> EndianReader
-dwarfEndianReader LittleEndian = EndianReader LittleEndian getWord16le getWord32le getWord64le
-dwarfEndianReader BigEndian    = EndianReader BigEndian    getWord16be getWord32be getWord64be
+endianReader :: Endianess -> EndianReader
+endianReader LittleEndian = EndianReader LittleEndian getWord16le getWord32le getWord64le
+endianReader BigEndian    = EndianReader BigEndian    getWord16be getWord32be getWord64be
 
 instance Show EndianReader where
   show der = "EndianReader " ++ show (derEndianess der)
@@ -161,9 +161,9 @@ data EndianSizeReader = EndianSizeReader
   , desrLargestOffset :: Word64
   , desrGetOffset :: Get Word64
   }
-dwarfEndianSizeReader :: Encoding -> EndianReader -> EndianSizeReader
-dwarfEndianSizeReader Encoding64 der = EndianSizeReader der Encoding64 0xffffffffffffffff (derGetW64 der)
-dwarfEndianSizeReader Encoding32 der = EndianSizeReader der Encoding32 0xffffffff (fromIntegral <$> derGetW32 der)
+endianSizeReader :: Encoding -> EndianReader -> EndianSizeReader
+endianSizeReader Encoding64 der = EndianSizeReader der Encoding64 0xffffffffffffffff (derGetW64 der)
+endianSizeReader Encoding32 der = EndianSizeReader der Encoding32 0xffffffff (fromIntegral <$> derGetW32 der)
 
 instance Show EndianSizeReader where
     show desr = "EndianSizeReader " ++ show (desrEndianReader desr) ++ " " ++ show (desrEncoding desr)
@@ -181,9 +181,9 @@ data Reader = Reader
 instance Show Reader where
     show dr = "Reader " ++ show (drDesr dr) ++ " " ++ show (drTarget64 dr)
 
-dwarfReader :: TargetSize -> EndianSizeReader -> Reader
-dwarfReader TargetSize64 desr = Reader desr TargetSize64 0xffffffffffffffff (desrGetW64 desr)
-dwarfReader TargetSize32 desr = Reader desr TargetSize32 0xffffffff         $ fromIntegral <$> desrGetW32 desr
+reader :: TargetSize -> EndianSizeReader -> Reader
+reader TargetSize64 desr = Reader desr TargetSize64 0xffffffffffffffff (desrGetW64 desr)
+reader TargetSize32 desr = Reader desr TargetSize32 0xffffffff         $ fromIntegral <$> desrGetW32 desr
 
 desrGetW16 :: EndianSizeReader -> Get Word16
 desrGetW16 = derGetW16 . desrEndianReader
@@ -630,22 +630,22 @@ getNameLookupEntries dr cu_offset =
 getTableHeader :: TargetSize -> EndianReader -> Get (Reader, CUOffset)
 getTableHeader target64 odr = do
   (der, _) <- getUnitLength odr
-  let dr = dwarfReader target64 der
+  let dr = reader target64 der
   _version <- drGetW16 dr
   cu_offset <- drGetOffset dr
   return (dr, CUOffset cu_offset)
 
 getNameLookupTable :: TargetSize -> EndianReader -> Get [M.Map String [DieID]]
-getNameLookupTable target64 odr = getWhileNotEmpty $ do
-  (dr, cu_offset) <- getTableHeader target64 odr
+getNameLookupTable target64 der = getWhileNotEmpty $ do
+  (dr, cu_offset) <- getTableHeader target64 der
   _debug_info_length <- drGetOffset dr
   M.fromListWith (++) <$> getNameLookupEntries dr cu_offset
 
 parsePubSection :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
 parsePubSection endianess target64 section =
-  M.unionsWith (++) $ strictGet (getNameLookupTable target64 dr) section
+  M.unionsWith (++) $ strictGet (getNameLookupTable target64 der) section
   where
-    dr = dwarfEndianReader endianess
+    der = endianReader endianess
 
 -- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a DieID
 parsePubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
@@ -687,7 +687,7 @@ getAddressRangeTable target64 odr = getWhileNotEmpty $ do
 parseAranges ::
   Endianess -> TargetSize -> B.ByteString -> [([Range], CUOffset)]
 parseAranges endianess target64 aranges_section =
-    let dr = dwarfEndianReader endianess
+    let dr = endianReader endianess
     in strictGet (getAddressRangeTable target64 dr) aranges_section
 
 {-# ANN module "HLint: ignore Use camelCase" #-}
@@ -838,14 +838,15 @@ getDebugLineFileNames = whileJust $ traverse entry =<< getNonEmptyUTF8Str0
 
 -- | Retrieves the line information for a DIE from a given substring of the .debug_line section. The offset
 -- into the .debug_line section is obtained from the DW_AT_stmt_list attribute of a DIE.
-parseLNE :: Endianess -> TargetSize -> B.ByteString -> ([String], [DW_LNE])
-parseLNE endianess target64 bs =
-    let dr = dwarfEndianReader endianess
-    in strictGet (getLNE target64 dr) bs
+parseLNE :: Endianess -> TargetSize -> Word64 -> B.ByteString -> ([String], [DW_LNE])
+parseLNE endianess target64 offset bs =
+    let dr = endianReader endianess
+    in getAt (getLNE target64 dr) offset bs
+
 getLNE :: TargetSize -> EndianReader -> Get ([String], [DW_LNE])
 getLNE target64 der = do
     (desr, endPos)             <- getUnitLength der
-    let dr                      = dwarfReader target64 desr
+    let dr                      = reader target64 desr
     _version                   <- drGetW16 dr
     _header_length             <- drGetOffset dr
     minimum_instruction_length <- getWord8
@@ -977,9 +978,9 @@ data DW_CIEFDE
 
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
-    let der    = dwarfEndianReader endianess
+    let der    = endianReader endianess
     (dur, endPos) <- getUnitLength der
-    let dr     = dwarfReader target64 dur
+    let dr     = reader target64 dur
     cie_id     <- drGetOffset dr
     if cie_id == drLargestOffset dr then do
         version                 <- getWord8
@@ -1188,8 +1189,8 @@ getCUHeader odr dwarfSections = do
                      dsAbbrevSection dwarfSections
   addr_size       <- getWord8
   dr              <- case addr_size of
-                      4 -> pure $ dwarfReader TargetSize32 desr
-                      8 -> pure $ dwarfReader TargetSize64 desr
+                      4 -> pure $ reader TargetSize32 desr
+                      8 -> pure $ reader TargetSize64 desr
                       _ -> fail $ "Invalid address size: " ++ show addr_size
   return (cu_offset, abbrev_map, dr)
 
@@ -1216,7 +1217,7 @@ parseInfo endianess dwarfSections =
   strictGet act $ dsInfoSection dwarfSections
   where
     act = runWriterT $ getDieCus dr dwarfSections
-    dr = dwarfEndianReader endianess
+    dr = endianReader endianess
 
 data DW_OP
     = DW_OP_addr Word64
