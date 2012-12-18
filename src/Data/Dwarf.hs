@@ -8,7 +8,6 @@ module Data.Dwarf
   , DieID, DIE(..), (!?)
   , DIERefs(..), DIEMap
   , Reader(..)
-  , infoCompileUnit
   , parseAranges
   , parsePubnames
   , parsePubtypes
@@ -601,15 +600,6 @@ getAbbrevList =
 -- | Utility function for retrieving the list of values for a specified attribute from a DWARF information entry.
 (!?) :: DIE -> DW_AT -> [DW_ATVAL]
 (!?) die at = map snd $ filter ((== at) . fst) $ dieAttributes die
-
--- | Returns compilation unit id given the header offset into .debug_info
-infoCompileUnit  :: B.ByteString -- ^ Contents of .debug_info
-                 -> Word64 -- ^ Offset into .debug_info header
-                 -> Word64 -- ^ Offset of compile unit DIE.
-infoCompileUnit infoSection offset =
-  case getAt getWord32be offset infoSection of
-    0xffffffff -> offset + 23
-    _ -> offset + 11
 
 getNonZeroOffset :: Reader -> Get (Maybe Word64)
 getNonZeroOffset dr = do
