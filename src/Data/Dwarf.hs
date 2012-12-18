@@ -340,10 +340,10 @@ data DIE = DIE
     }
 instance Show DIE where
   show (DIE (DieID i) tag attrs children _) =
-    concat $ ["DIE@", show i, " ", show tag, " (", show (length children), " children)"] ++ concat
+    concat $ ["DIE@", show i, "{", show tag, " (", show (length children), " children)"] ++ concat
     [ [" ", show attr, "=(", show val, ")"]
     | (attr, val) <- attrs
-    ]
+    ] ++ ["}"]
 
 addRefs :: Maybe DieID -> [DIE] -> [DIERefs]
 addRefs mParent = go Nothing
