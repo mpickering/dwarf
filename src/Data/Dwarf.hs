@@ -1095,38 +1095,32 @@ data Tree ptr a = Tree
 newtype DieID = DieID Word64
   deriving (Eq, Ord, Read, Show)
 
+type DIETree = Tree DieID DIE
+
 -- | The dwarf information entries form a graph of nodes tagged with attributes. Please refer to the DWARF specification
 -- for semantics. Although it looks like a tree, there can be attributes which have adjacency information which will
 -- introduce cross-branch edges.
 data DIE = DIE
-    { dieId           :: DieID              -- ^ Unique identifier for this entry.
-    , dieTag          :: DW_TAG              -- ^ Type tag.
-    , dieAttributes   :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
-    , dieReader       :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
+    { dieId         :: DieID              -- ^ Unique identifier for this entry.
+    , dieTag        :: DW_TAG              -- ^ Type tag.
+    , dieAttributes :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
+    , dieChildren   :: [DIETree]
+    , dieReader     :: DwarfReader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     }
 instance Show DIE where
-  show (DIE (DieID i) tag attrs _) =
-    unwords $ ["DIE", show i, show tag] ++ concat
+  show (DIE (DieID i) tag attrs children _) =
+    unwords $ ["DIE", show i, show tag, "(", show (length children), "children)"] ++ concat
     [ [show attr, "=", show val]
     | (attr, val) <- attrs
     ]
 
-type DIETree = Tree DieID DIE
-
-addSiblings :: Maybe DieID -> [DIE] -> [DIETree]
-addSiblings mParent = go Nothing
+intoTree :: Maybe DieID -> [DIE] -> [DIETree]
+intoTree mParent = go Nothing
   where
     go _lSibling [] = []
     go lSibling (die : xs) =
       Tree mParent lSibling (dieId <$> listToMaybe xs) die :
       go (Just (dieId die)) xs
-
-concatSiblings :: Maybe DieID -> [(DIE, [DIETree])] -> [DIETree]
-concatSiblings mParent diesAndDescendants =
-  addSiblings mParent dies ++ descendants
-  where
-    dies = map fst diesAndDescendants
-    descendants = concatMap snd diesAndDescendants
 
 newtype DwarfContext = DwarfContext
   { dcStrSection :: B.ByteString
@@ -1142,9 +1136,9 @@ data CUContext = CUContext
 -- Decode a non-compilation unit DWARF information entry, its children and its siblings.
 getDieAndSiblings :: DieID -> CUContext -> Get [DIETree]
 getDieAndSiblings parent cuContext =
-  concatSiblings (Just parent) <$> whileJust (getDIEAndDescendants cuContext)
+  intoTree (Just parent) <$> whileJust (getDIEAndDescendants cuContext)
 
-getDIEAndDescendants :: CUContext -> Get (Maybe (DIE, [DIETree]))
+getDIEAndDescendants :: CUContext -> Get (Maybe DIE)
 getDIEAndDescendants cuContext = do
   offset <- DieID . fromIntegral <$> Get.bytesRead
   let
@@ -1154,12 +1148,11 @@ getDIEAndDescendants cuContext = do
         tag            = abbrevTag abbrev
         (attrs, forms) = unzip $ abbrevAttrForms abbrev
       values          <- mapM (getForm cuContext) forms
-      descendants <-
+      children <-
         if abbrevChildren abbrev
         then getDieAndSiblings offset cuContext
         else pure []
-      pure $
-        (DIE offset tag (zip attrs values) dr, descendants)
+      pure $ DIE offset tag (zip attrs values) children dr
   traverse go =<< getMAbbrevId
   where
     dr = cuReader cuContext
@@ -1168,7 +1161,7 @@ getDIEAndDescendants cuContext = do
 -- Decode the compilation unit DWARF information entries.
 getDieCus :: DwarfEndianReader -> B.ByteString -> B.ByteString -> Get [DIETree]
 getDieCus odr abbrev_section str_section =
-  fmap (concatSiblings Nothing) .
+  fmap (intoTree Nothing) .
   getWhileNotEmpty $ do
     cu_offset       <- CUOffset . fromIntegral <$> Get.bytesRead
     (desr, _)       <- getDwarfUnitLength odr
