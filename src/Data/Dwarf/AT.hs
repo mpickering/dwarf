@@ -12,7 +12,7 @@ data DW_ATVAL
     | DW_ATVAL_STRING String
     | DW_ATVAL_BLOB   B.ByteString
     | DW_ATVAL_BOOL   Bool
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Show)
 
 data DW_AT
     = DW_AT_sibling              -- ^ reference

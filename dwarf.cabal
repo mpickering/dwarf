@@ -1,11 +1,11 @@
-Name:          dwarf
-Version:       0.23
+Name:          dwarf-el
+Version:       0.1
 License:       BSD3
 License-file:  LICENSE
 Category:      Data
-Author:        Erik Charlebois
-Copyright:     Erik Charlebois
-Maintainer:    Erik Charlebois <erikcharlebois@gmail.com>
+Author:        Eyal Lotem
+Copyright:     Eyal Lotem, Erik Charlebois
+Maintainer:    Eyal Lotem <eyal.lotem@gmail.com>
 Stability:     unstable
 Cabal-Version: >= 1.2
 Build-Depends: base
@@ -15,7 +15,7 @@ Description:   Parser for DWARF debug format.
 Data-Files:    tests/Test.hs
 
 library
-    build-depends:   base >= 2 && < 5, transformers,
+    build-depends:   base >= 2 && < 5, transformers >= 0.3,
                      bytestring, containers, binary,
                      utf8-string >= 0.3.7
     hs-source-dirs:  src

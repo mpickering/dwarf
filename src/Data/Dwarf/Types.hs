@@ -3,7 +3,10 @@ module Data.Dwarf.Types where
 import Data.Word (Word64)
 
 newtype DieID = DieID Word64
-  deriving (Eq, Ord, Read, Show)
+  deriving (Eq, Ord)
+
+instance Show DieID where
+  show (DieID x) = "DIE@" ++ show x
 
 data DW_DS
     = DW_DS_unsigned
