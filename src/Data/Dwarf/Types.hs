@@ -87,6 +87,7 @@ data DW_LANG
     | DW_LANG_ObjC_plus_plus
     | DW_LANG_UPC
     | DW_LANG_D
+    | DW_LANG_User Int -- 0x8000..0xFFFF
     deriving (Eq, Ord, Read, Show)
 dw_lang :: Word64 -> DW_LANG
 dw_lang 0x0001 = DW_LANG_C89
@@ -108,7 +109,11 @@ dw_lang 0x0010 = DW_LANG_ObjC
 dw_lang 0x0011 = DW_LANG_ObjC_plus_plus
 dw_lang 0x0012 = DW_LANG_UPC
 dw_lang 0x0013 = DW_LANG_D
-dw_lang n = error $ "Unrecognized DW_LANG " ++ show n
+dw_lang n
+  | 0x8000 <= n && n <= 0xffff =
+    DW_LANG_User $ fromIntegral n
+  | otherwise =
+    error $ "Unrecognized DW_LANG " ++ show n
 
 data DW_ID
     = DW_ID_case_sensitive
