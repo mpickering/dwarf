@@ -368,27 +368,31 @@ getForm
   cuContext@CUContext { cuReader = dr, cuOffset = cu, cuSections = dc }
   form
   = case form of
-    DW_FORM_addr      -> DW_ATVAL_UINT . fromIntegral <$> drGetTargetAddress dr
-    DW_FORM_block1    -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
-    DW_FORM_block2    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW16 dr)
-    DW_FORM_block4    -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW32 dr)
-    DW_FORM_block     -> DW_ATVAL_BLOB <$> getByteStringLen getULEB128
-    DW_FORM_data1     -> DW_ATVAL_UINT . fromIntegral <$> getWord8
-    DW_FORM_data2     -> DW_ATVAL_UINT . fromIntegral <$> drGetW16 dr
-    DW_FORM_data4     -> DW_ATVAL_UINT . fromIntegral <$> drGetW32 dr
-    DW_FORM_data8     -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
-    DW_FORM_udata     -> DW_ATVAL_UINT <$> getULEB128
-    DW_FORM_sdata     -> DW_ATVAL_INT <$> getSLEB128
-    DW_FORM_flag      -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
-    DW_FORM_string    -> DW_ATVAL_STRING <$> getUTF8Str0
-    DW_FORM_ref1      -> DW_ATVAL_REF . inCU cu <$> getWord8
-    DW_FORM_ref2      -> DW_ATVAL_REF . inCU cu <$> drGetW16 dr
-    DW_FORM_ref4      -> DW_ATVAL_REF . inCU cu <$> drGetW32 dr
-    DW_FORM_ref8      -> DW_ATVAL_REF . inCU cu <$> drGetW64 dr
-    DW_FORM_ref_udata -> DW_ATVAL_REF . inCU cu <$> getULEB128
-    DW_FORM_ref_addr  -> DW_ATVAL_UINT <$> drGetOffset dr
-    DW_FORM_indirect  -> getForm cuContext . dw_form =<< getULEB128
-    DW_FORM_strp      -> do
+    DW_FORM_addr         -> DW_ATVAL_UINT . fromIntegral <$> drGetTargetAddress dr
+    DW_FORM_block1       -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
+    DW_FORM_block2       -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW16 dr)
+    DW_FORM_block4       -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW32 dr)
+    DW_FORM_block        -> DW_ATVAL_BLOB <$> getByteStringLen getULEB128
+    DW_FORM_data1        -> DW_ATVAL_UINT . fromIntegral <$> getWord8
+    DW_FORM_data2        -> DW_ATVAL_UINT . fromIntegral <$> drGetW16 dr
+    DW_FORM_data4        -> DW_ATVAL_UINT . fromIntegral <$> drGetW32 dr
+    DW_FORM_data8        -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
+    DW_FORM_udata        -> DW_ATVAL_UINT <$> getULEB128
+    DW_FORM_sdata        -> DW_ATVAL_INT <$> getSLEB128
+    DW_FORM_flag         -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
+    DW_FORM_string       -> DW_ATVAL_STRING <$> getUTF8Str0
+    DW_FORM_ref1         -> DW_ATVAL_REF . inCU cu <$> getWord8
+    DW_FORM_ref2         -> DW_ATVAL_REF . inCU cu <$> drGetW16 dr
+    DW_FORM_ref4         -> DW_ATVAL_REF . inCU cu <$> drGetW32 dr
+    DW_FORM_ref8         -> DW_ATVAL_REF . inCU cu <$> drGetW64 dr
+    DW_FORM_ref_udata    -> DW_ATVAL_REF . inCU cu <$> getULEB128
+    DW_FORM_ref_addr     -> DW_ATVAL_UINT <$> drGetOffset dr
+    DW_FORM_sec_offset   -> DW_ATVAL_UINT <$> drGetOffset dr
+    DW_FORM_exprloc      -> DW_ATVAL_BLOB <$> getByteStringLen getULEB128
+    DW_FORM_flag_present -> pure $ DW_ATVAL_BOOL True
+    DW_FORM_ref_sig8     -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
+    DW_FORM_indirect     -> getForm cuContext . dw_form =<< getULEB128
+    DW_FORM_strp         -> do
       offset <- fromIntegral <$> drGetOffset dr
       pure . DW_ATVAL_STRING .
         getAt getUTF8Str0 offset $ dsStrSection dc

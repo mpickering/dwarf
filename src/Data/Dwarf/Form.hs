@@ -24,6 +24,10 @@ data DW_FORM
     | DW_FORM_ref8                -- ^ reference
     | DW_FORM_ref_udata           -- ^ reference
     | DW_FORM_indirect            -- ^ (see Section 7.5.3 of DWARF3 specification)
+    | DW_FORM_sec_offset          -- ^ (Dwarf 4)
+    | DW_FORM_exprloc             -- ^ (Dwarf 4)
+    | DW_FORM_flag_present        -- ^ (Dwarf 4)
+    | DW_FORM_ref_sig8            -- ^ (Dwarf 4)
     deriving (Eq, Ord, Read, Show)
 dw_form :: Word64 -> DW_FORM
 dw_form 0x01 = DW_FORM_addr
@@ -47,4 +51,8 @@ dw_form 0x13 = DW_FORM_ref4
 dw_form 0x14 = DW_FORM_ref8
 dw_form 0x15 = DW_FORM_ref_udata
 dw_form 0x16 = DW_FORM_indirect
+dw_form 0x17 = DW_FORM_sec_offset
+dw_form 0x18 = DW_FORM_exprloc
+dw_form 0x19 = DW_FORM_flag_present
+dw_form 0x20 = DW_FORM_ref_sig8
 dw_form n    = error $ "Unrecognized DW_FORM " ++ show n

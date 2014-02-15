@@ -1,9 +1,9 @@
 Name:          dwarf-el
-Version:       0.1
+Version:       0.2
 License:       BSD3
 License-file:  LICENSE
 Category:      Data
-Author:        Eyal Lotem
+Author:        Eyal Lotem, Erik Charlebois
 Copyright:     Eyal Lotem, Erik Charlebois
 Maintainer:    Eyal Lotem <eyal.lotem@gmail.com>
 Stability:     unstable
