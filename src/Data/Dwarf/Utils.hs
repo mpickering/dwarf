@@ -2,7 +2,7 @@ module Data.Dwarf.Utils where
 
 import Control.Applicative (Applicative(..), (<$>), (*>))
 import Data.Binary.Get (getByteString, getWord8, Get, runGet)
-import Data.Bits (Bits, (.|.), shiftL, clearBit, testBit)
+import Data.Bits ((.|.), shiftL, clearBit, testBit)
 import Data.Int (Int64)
 import Data.Word (Word64)
 import qualified Data.Binary.Get as Get
