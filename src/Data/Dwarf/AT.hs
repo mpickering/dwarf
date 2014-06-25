@@ -101,6 +101,12 @@ data DW_AT
     | DW_AT_elemental            -- ^ flag
     | DW_AT_return                 -- ^ flag
     | DW_AT_recursive            -- ^ flag
+    | DW_AT_signature
+    | DW_AT_main_subprogram
+    | DW_AT_data_bit_offset
+    | DW_AT_const_expr
+    | DW_AT_enum_class
+    | DW_AT_linkage_name
     | DW_AT_user Word64          -- ^ user extension
     deriving (Eq, Ord, Read, Show)
 
@@ -191,5 +197,11 @@ dw_at 0x65 = DW_AT_endianity
 dw_at 0x66 = DW_AT_elemental
 dw_at 0x67 = DW_AT_return
 dw_at 0x68 = DW_AT_recursive
+dw_at 0x69 = DW_AT_signature
+dw_at 0x6a = DW_AT_main_subprogram
+dw_at 0x6b = DW_AT_data_bit_offset
+dw_at 0x6c = DW_AT_const_expr
+dw_at 0x6d = DW_AT_enum_class
+dw_at 0x6e = DW_AT_linkage_name
 dw_at n | 0x2000 <= n && n <= 0x3fff = DW_AT_user n
 dw_at n = error $ "Unrecognized DW_AT " ++ show n
