@@ -5,7 +5,7 @@ module Data.Dwarf
   ( Endianess(..), TargetSize(..)
   , Sections(..)
   , parseInfo
-  , DieID, DIE(..), (!?)
+  , DieID, dieID, DIE(..), (!?)
   , DIERefs(..), DIEMap
   , Reader(..)
   , parseAranges
@@ -62,6 +62,11 @@ import qualified Data.Map as M
 
 newtype CUOffset = CUOffset Word64
   deriving (Eq, Ord, Read, Show)
+
+-- Don't export a constructor, so users can only read DieID's, not
+-- create fake ones, which is slightly safer.
+dieID :: DieID -> Word64
+dieID (DieID x) = x
 
 inCU :: Integral a => CUOffset -> a -> DieID
 inCU (CUOffset base) x = DieID $ base + fromIntegral x
