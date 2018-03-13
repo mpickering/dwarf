@@ -85,11 +85,11 @@ getDW_OP dr = getWord8 >>= getDW_OP_
     getDW_OP_ :: Word8 -> Get DW_OP
     getDW_OP_ 0x03 = pure DW_OP_addr <*> drGetTargetAddress dr
     getDW_OP_ 0x06 = pure DW_OP_deref
-    getDW_OP_ 0x08 = pure DW_OP_const1u <*> fromIntegral <$> getWord8
+    getDW_OP_ 0x08 = pure DW_OP_const1u <*>                  getWord8
     getDW_OP_ 0x09 = pure DW_OP_const1s <*> fromIntegral <$> getWord8
-    getDW_OP_ 0x0a = pure DW_OP_const2u <*> fromIntegral <$> drGetW16 dr
+    getDW_OP_ 0x0a = pure DW_OP_const2u <*>                  drGetW16 dr
     getDW_OP_ 0x0b = pure DW_OP_const2s <*> fromIntegral <$> drGetW16 dr
-    getDW_OP_ 0x0c = pure DW_OP_const4u <*> fromIntegral <$> drGetW32 dr
+    getDW_OP_ 0x0c = pure DW_OP_const4u <*>                  drGetW32 dr
     getDW_OP_ 0x0d = pure DW_OP_const4s <*> fromIntegral <$> drGetW32 dr
     getDW_OP_ 0x0e = pure DW_OP_const8u <*> drGetW64 dr
     getDW_OP_ 0x0f = pure DW_OP_const8s <*> fromIntegral <$> drGetW64 dr
