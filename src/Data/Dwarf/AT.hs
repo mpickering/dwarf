@@ -114,6 +114,37 @@ data DW_AT
     | DW_AT_const_expr
     | DW_AT_enum_class
     | DW_AT_linkage_name
+
+    -- DWARF 5
+    | DW_AT_string_length_bit_size
+    | DW_AT_string_length_byte_size
+    | DW_AT_rank
+    | DW_AT_str_offsets_base
+    | DW_AT_addr_base
+    | DW_AT_rnglists_base
+    | DW_AT_dwo_name
+    | DW_AT_reference
+    | DW_AT_rvalue_reference
+    | DW_AT_macros
+    | DW_AT_call_all_calls
+    | DW_AT_call_all_source_calls
+    | DW_AT_call_all_tail_calls
+    | DW_AT_call_return_pc
+    | DW_AT_call_value
+    | DW_AT_call_origin
+    | DW_AT_call_parameter
+    | DW_AT_call_pc
+    | DW_AT_call_tail_call
+    | DW_AT_call_target
+    | DW_AT_call_target_clobbered
+    | DW_AT_call_data_location
+    | DW_AT_call_data_value
+    | DW_AT_noreturn
+    | DW_AT_alignment
+    | DW_AT_export_symbols
+    | DW_AT_deleted
+    | DW_AT_defaulted
+    | DW_AT_loclists_base
     | DW_AT_user Word64          -- ^ user extension
     deriving (Eq, Ord, Read, Show, Generic)
 
@@ -212,5 +243,34 @@ dw_at 0x6b = DW_AT_data_bit_offset
 dw_at 0x6c = DW_AT_const_expr
 dw_at 0x6d = DW_AT_enum_class
 dw_at 0x6e = DW_AT_linkage_name
+dw_at 0x6f = DW_AT_string_length_bit_size
+dw_at 0x70 = DW_AT_string_length_byte_size
+dw_at 0x71 = DW_AT_rank
+dw_at 0x72 = DW_AT_str_offsets_base
+dw_at 0x73 = DW_AT_addr_base
+dw_at 0x74 = DW_AT_rnglists_base
+dw_at 0x76 = DW_AT_dwo_name
+dw_at 0x77 = DW_AT_reference
+dw_at 0x78 = DW_AT_rvalue_reference
+dw_at 0x79 = DW_AT_macros
+dw_at 0x7a = DW_AT_call_all_calls
+dw_at 0x7b = DW_AT_call_all_source_calls
+dw_at 0x7c = DW_AT_call_all_tail_calls
+dw_at 0x7d = DW_AT_call_return_pc
+dw_at 0x7e = DW_AT_call_value
+dw_at 0x7f = DW_AT_call_origin
+dw_at 0x80 = DW_AT_call_parameter
+dw_at 0x81 = DW_AT_call_pc
+dw_at 0x82 = DW_AT_call_tail_call
+dw_at 0x83 = DW_AT_call_target
+dw_at 0x84 = DW_AT_call_target_clobbered
+dw_at 0x85 = DW_AT_call_data_location
+dw_at 0x86 = DW_AT_call_data_value
+dw_at 0x87 = DW_AT_noreturn
+dw_at 0x88 = DW_AT_alignment
+dw_at 0x89 = DW_AT_export_symbols
+dw_at 0x8a = DW_AT_deleted
+dw_at 0x8b = DW_AT_defaulted
+dw_at 0x8c = DW_AT_loclists_base
 dw_at n | 0x2000 <= n && n <= 0x3fff = DW_AT_user n
 dw_at n = error $ "Unrecognized DW_AT " ++ show n
