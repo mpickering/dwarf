@@ -34,31 +34,32 @@ module Data.Dwarf
   , DW_DSC(..), dw_dsc
   ) where
 
-import Control.Applicative (Applicative(..), (<$>), (<$))
-import Control.Arrow ((&&&), (***))
-import Control.Monad ((<=<))
-import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.Writer (WriterT(..))
-import Data.Binary (Get)
-import Data.Binary.Get (getWord8, getByteString)
-import Data.Dwarf.AT
-import Data.Dwarf.ATE
-import Data.Dwarf.Form
-import Data.Dwarf.LNI
-import Data.Dwarf.OP
-import Data.Dwarf.TAG
-import Data.Dwarf.CFA
-import Data.Dwarf.Reader
-import Data.Dwarf.Types
-import Data.Dwarf.Utils
-import Data.Int (Int64)
-import Data.Maybe (listToMaybe)
-import Data.Traversable (traverse)
-import Data.Word (Word64)
+import           Control.Applicative (Applicative(..), (<$>), (<$))
+import           Control.Arrow ((&&&), (***))
+import           Control.Monad ((<=<))
+import           Control.Monad.Trans.Class (lift)
+import           Control.Monad.Trans.Writer (WriterT(..))
 import qualified Control.Monad.Trans.Writer as Writer
+import           Data.Binary (Get)
+import           Data.Binary.Get (getWord8, getByteString)
 import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
+import           Data.Dwarf.AT
+import           Data.Dwarf.ATE
+import           Data.Dwarf.CFA
+import           Data.Dwarf.Form
+import           Data.Dwarf.LNI
+import           Data.Dwarf.OP
+import           Data.Dwarf.Reader
+import           Data.Dwarf.TAG
+import           Data.Dwarf.Types
+import           Data.Dwarf.Utils
+import           Data.Int (Int64)
 import qualified Data.Map as M
+import           Data.Maybe (listToMaybe)
+import           Data.Text (Text)
+import           Data.Traversable (traverse)
+import           Data.Word (Word64)
 
 newtype CUOffset = CUOffset Word64
   deriving (Eq, Ord, Read, Show)
@@ -133,7 +134,7 @@ getNonZeroOffset dr = do
   pure $ if offset == 0 then Nothing else Just offset
 
 -- Section 7.19 - Name Lookup Tables
-getNameLookupEntries :: Reader -> CUOffset -> Get [(String, [DieID])]
+getNameLookupEntries :: Reader -> CUOffset -> Get [(Text, [DieID])]
 getNameLookupEntries dr cu_offset =
   whileJust $ traverse getEntry =<< getNonZeroOffset dr
   where
@@ -151,24 +152,24 @@ getTableHeader target64 der = do
   cu_offset <- drGetOffset dr
   return (dr, CUOffset cu_offset)
 
-getNameLookupTable :: TargetSize -> EndianReader -> Get [M.Map String [DieID]]
+getNameLookupTable :: TargetSize -> EndianReader -> Get [M.Map Text [DieID]]
 getNameLookupTable target64 der = getWhileNotEmpty $ do
   (dr, cu_offset) <- getTableHeader target64 der
   _debug_info_length <- drGetOffset dr
   M.fromListWith (++) <$> getNameLookupEntries dr cu_offset
 
-parsePubSection :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
+parsePubSection :: Endianess -> TargetSize -> B.ByteString -> M.Map Text [DieID]
 parsePubSection endianess target64 section =
   M.unionsWith (++) $ strictGet (getNameLookupTable target64 der) section
   where
     der = endianReader endianess
 
 -- | Parses the .debug_pubnames section (as ByteString) into a map from a value name to a DieID
-parsePubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
+parsePubnames :: Endianess -> TargetSize -> B.ByteString -> M.Map Text [DieID]
 parsePubnames = parsePubSection
 
 -- | Parses the .debug_pubtypes section (as ByteString) into a map from a type name to a DieID
-parsePubtypes :: Endianess -> TargetSize -> B.ByteString -> M.Map String [DieID]
+parsePubtypes :: Endianess -> TargetSize -> B.ByteString -> M.Map Text [DieID]
 parsePubtypes = parsePubSection
 
 align :: Integral a => a -> Get ()
@@ -210,11 +211,11 @@ parseAranges endianess target64 aranges_section =
 
 -- Section 7.21 - Macro Information
 data DW_MACINFO
-    = DW_MACINFO_define Word64 String     -- ^ Line number and defined symbol with definition
-    | DW_MACINFO_undef Word64 String      -- ^ Line number and undefined symbol
+    = DW_MACINFO_define Word64 Text       -- ^ Line number and defined symbol with definition
+    | DW_MACINFO_undef Word64 Text        -- ^ Line number and undefined symbol
     | DW_MACINFO_start_file Word64 Word64 -- ^ Marks start of file with the line where the file was included from and a source file index
     | DW_MACINFO_end_file                 -- ^ Marks end of file
-    | DW_MACINFO_vendor_ext Word64 String -- ^ Implementation defined
+    | DW_MACINFO_vendor_ext Word64 Text   -- ^ Implementation defined
     deriving (Eq, Ord, Read, Show)
 
 -- | Retrieves the macro information for a compilation unit from a given substring of the .debug_macinfo section. The offset
@@ -236,7 +237,7 @@ getMacInfo = do
 
 data DW_CIEFDE
     = DW_CIE
-        { cieAugmentation          :: String
+        { cieAugmentation          :: Text
         , cieCodeAlignmentFactor   :: Word64
         , cieDataAlignmentFactor   :: Int64
         , cieReturnAddressRegister :: Word64
@@ -373,7 +374,7 @@ getForm
   cuContext@CUContext { cuReader = dr, cuOffset = cu, cuSections = dc }
   form
   = case form of
-    DW_FORM_addr         -> DW_ATVAL_UINT . fromIntegral <$> drGetTargetAddress dr
+    DW_FORM_addr         -> DW_ATVAL_UINT <$> drGetTargetAddress dr
     DW_FORM_block1       -> DW_ATVAL_BLOB <$> getByteStringLen getWord8
     DW_FORM_block2       -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW16 dr)
     DW_FORM_block4       -> DW_ATVAL_BLOB <$> getByteStringLen (drGetW32 dr)
@@ -381,7 +382,7 @@ getForm
     DW_FORM_data1        -> DW_ATVAL_UINT . fromIntegral <$> getWord8
     DW_FORM_data2        -> DW_ATVAL_UINT . fromIntegral <$> drGetW16 dr
     DW_FORM_data4        -> DW_ATVAL_UINT . fromIntegral <$> drGetW32 dr
-    DW_FORM_data8        -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
+    DW_FORM_data8        -> DW_ATVAL_UINT <$> drGetW64 dr
     DW_FORM_udata        -> DW_ATVAL_UINT <$> getULEB128
     DW_FORM_sdata        -> DW_ATVAL_INT <$> getSLEB128
     DW_FORM_flag         -> DW_ATVAL_BOOL . (/= 0) <$> getWord8
@@ -395,10 +396,10 @@ getForm
     DW_FORM_sec_offset   -> DW_ATVAL_UINT <$> drGetOffset dr
     DW_FORM_exprloc      -> DW_ATVAL_BLOB <$> getByteStringLen getULEB128
     DW_FORM_flag_present -> pure $ DW_ATVAL_BOOL True
-    DW_FORM_ref_sig8     -> DW_ATVAL_UINT . fromIntegral <$> drGetW64 dr
+    DW_FORM_ref_sig8     -> DW_ATVAL_UINT <$> drGetW64 dr
     DW_FORM_indirect     -> getForm cuContext . dw_form =<< getULEB128
     DW_FORM_strp         -> do
-      offset <- fromIntegral <$> drGetOffset dr
+      offset <- drGetOffset dr
       pure . DW_ATVAL_STRING .
         getAt getUTF8Str0 offset $ dsStrSection dc
 

@@ -1,12 +1,12 @@
 module Data.Dwarf.OP where
 
-import Control.Applicative (Applicative(..), (<$>))
-import Data.Binary.Get (getWord8, Get)
-import Data.Dwarf.Reader
-import Data.Dwarf.Utils
-import Data.Int (Int8, Int16, Int32, Int64)
-import Data.Word (Word8, Word16, Word32, Word64)
+import           Control.Applicative (Applicative(..), (<$>))
+import           Data.Binary.Get (getWord8, Get)
 import qualified Data.ByteString as B
+import           Data.Dwarf.Reader
+import           Data.Dwarf.Utils
+import           Data.Int (Int8, Int16, Int32, Int64)
+import           Data.Word (Word8, Word16, Word32, Word64)
 
 data DW_OP
     = DW_OP_addr Word64

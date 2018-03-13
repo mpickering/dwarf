@@ -1,16 +1,18 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Data.Dwarf.LNI where
 
-import Control.Applicative (Applicative(..), (<$>))
-import Control.Monad (replicateM)
-import Data.Binary (Binary(..), Get)
-import Data.Binary.Get (getWord8)
-import Data.Dwarf.Reader
-import Data.Dwarf.Utils
-import Data.Int (Int8, Int64)
-import Data.Traversable (traverse)
-import Data.Word (Word8, Word64)
+import           Control.Applicative (Applicative(..), (<$>))
+import           Control.Monad (replicateM)
+import           Data.Binary (Binary(..), Get)
+import           Data.Binary.Get (getWord8)
 import qualified Data.Binary.Get as Get
 import qualified Data.ByteString as B
+import           Data.Dwarf.Reader
+import           Data.Dwarf.Utils
+import           Data.Int (Int8, Int64)
+import           Data.Text (Text)
+import           Data.Traversable (traverse)
+import           Data.Word (Word8, Word64)
 
 -- Section 7.21 - Line Number Information
 data DW_LNI
@@ -29,10 +31,10 @@ data DW_LNI
     | DW_LNS_set_isa Word64
     | DW_LNE_end_sequence
     | DW_LNE_set_address Word64
-    | DW_LNE_define_file String Word64 Word64 Word64
+    | DW_LNE_define_file Text Word64 Word64 Word64
     deriving (Eq, Ord, Read, Show)
 getDW_LNI :: Reader -> Int64 -> Word8 -> Word8 -> Word64 -> Get DW_LNI
-getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = fromIntegral <$> getWord8 >>= getDW_LNI_
+getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = getWord8 >>= getDW_LNI_
     where getDW_LNI_ 0x00 = do
             rest <- getByteStringLen getULEB128
             pure $ strictGet getDW_LNE rest
@@ -125,9 +127,9 @@ data DW_LNE = DW_LNE
     , lnmPrologueEnd   :: Bool
     , lnmEpilogueBegin :: Bool
     , lnmISA           :: Word64
-    , lnmFiles         :: [(String, Word64, Word64, Word64)]
+    , lnmFiles         :: [(Text, Word64, Word64, Word64)]
     } deriving (Eq, Ord, Read, Show)
-defaultLNE :: Bool -> [(String, Word64, Word64, Word64)] -> DW_LNE
+defaultLNE :: Bool -> [(Text, Word64, Word64, Word64)] -> DW_LNE
 defaultLNE is_stmt files = DW_LNE
     { lnmAddress       = 0
     , lnmFile          = 1
@@ -144,12 +146,12 @@ defaultLNE is_stmt files = DW_LNE
 
 -- | Retrieves the line information for a DIE from a given substring of the .debug_line section. The offset
 -- into the .debug_line section is obtained from the DW_AT_stmt_list attribute of a DIE.
-parseLNE :: Endianess -> TargetSize -> Word64 -> B.ByteString -> ([String], [DW_LNE])
+parseLNE :: Endianess -> TargetSize -> Word64 -> B.ByteString -> ([Text], [DW_LNE])
 parseLNE endianess target64 offset bs =
     let dr = endianReader endianess
     in getAt (getLNE target64 dr) offset bs
 
-getDebugLineFileNames :: Get [(String, Word64, Word64, Word64)]
+getDebugLineFileNames :: Get [(Text, Word64, Word64, Word64)]
 getDebugLineFileNames = whileJust $ traverse entry =<< getNonEmptyUTF8Str0
   where
     entry file_name = do
@@ -158,7 +160,7 @@ getDebugLineFileNames = whileJust $ traverse entry =<< getNonEmptyUTF8Str0
       file_length <- getULEB128
       pure (file_name, dir_index, last_mod, file_length)
 
-getLNE :: TargetSize -> EndianReader -> Get ([String], [DW_LNE])
+getLNE :: TargetSize -> EndianReader -> Get ([Text], [DW_LNE])
 getLNE target64 der = do
     (desr, endPos)             <- getUnitLength der
     let dr                      = reader target64 desr

@@ -8,15 +8,13 @@ Copyright:     Eyal Lotem, Erik Charlebois
 Maintainer:    Eyal Lotem <eyal.lotem@gmail.com>
 Stability:     unstable
 Cabal-Version: >= 1.6
-Build-Depends: base
 Build-Type:    Simple
 Synopsis:      Parser for DWARF debug format.
 Description:   Parser for DWARF debug format.
 
 library
     build-depends:   base >= 2 && < 5, transformers >= 0.3,
-                     bytestring, containers, binary,
-                     utf8-string >= 0.3.7
+                     bytestring, containers, binary, text
     hs-source-dirs:  src
     exposed-modules: Data.Dwarf
     other-modules:   Data.Dwarf.Types,

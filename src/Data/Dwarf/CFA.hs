@@ -1,13 +1,13 @@
 module Data.Dwarf.CFA where
 
-import Control.Applicative (Applicative(..))
-import Data.Binary.Get (getWord8, Get)
-import Data.Bits (shiftR, (.&.))
-import Data.Dwarf.Reader
-import Data.Dwarf.Utils
-import Data.Int (Int64)
-import Data.Word (Word8, Word16, Word32, Word64)
+import           Control.Applicative (Applicative(..))
+import           Data.Binary.Get (getWord8, Get)
+import           Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as B
+import           Data.Dwarf.Reader
+import           Data.Dwarf.Utils
+import           Data.Int (Int64)
+import           Data.Word (Word8, Word16, Word32, Word64)
 
 -- Section 7.22 - Call Frame
 data DW_CFA

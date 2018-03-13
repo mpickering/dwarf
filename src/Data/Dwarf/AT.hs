@@ -1,15 +1,16 @@
 module Data.Dwarf.AT where
 
-import Data.Dwarf.Types
-import Data.Int (Int64)
-import Data.Word (Word64)
 import qualified Data.ByteString as B
+import           Data.Dwarf.Types
+import           Data.Int (Int64)
+import           Data.Text (Text)
+import           Data.Word (Word64)
 
 data DW_ATVAL
     = DW_ATVAL_INT    Int64
     | DW_ATVAL_UINT   Word64
     | DW_ATVAL_REF    DieID
-    | DW_ATVAL_STRING String
+    | DW_ATVAL_STRING Text
     | DW_ATVAL_BLOB   B.ByteString
     | DW_ATVAL_BOOL   Bool
     deriving (Eq, Ord, Show)
