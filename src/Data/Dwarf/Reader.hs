@@ -1,16 +1,28 @@
+{-# LANGUAGE DeriveGeneric #-}
 module Data.Dwarf.Reader where
 
 import           Control.Applicative ((<$>), pure)
 import           Data.Binary.Get (getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get)
 import qualified Data.Binary.Get as Get
 import           Data.Word (Word16, Word32, Word64)
+import           GHC.Generics (Generic)
+import           TextShow (TextShow(..))
+import           TextShow.Generic (genericShowbPrec)
 
 data Endianess = LittleEndian | BigEndian
-  deriving (Eq, Ord, Read, Show)
+  deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow Endianess where showbPrec = genericShowbPrec
+
 data Encoding = Encoding32 | Encoding64
-  deriving (Eq, Ord, Read, Show)
+  deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow Encoding where showbPrec = genericShowbPrec
+
 data TargetSize = TargetSize32 | TargetSize64
-  deriving (Eq, Ord, Read, Show)
+  deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow TargetSize where showbPrec = genericShowbPrec
 
 endianReader :: Endianess -> EndianReader
 endianReader LittleEndian = EndianReader LittleEndian getWord16le getWord32le getWord64le
@@ -46,8 +58,6 @@ data EndianReader = EndianReader
   , derGetW32 :: Get Word32
   , derGetW64 :: Get Word64
   }
-instance Show EndianReader where
-  show der = "EndianReader " ++ show (derEndianess der)
 
 -- Intermediate data structure for a partial Reader.
 data EndianSizeReader = EndianSizeReader
@@ -56,8 +66,6 @@ data EndianSizeReader = EndianSizeReader
   , desrLargestOffset :: Word64
   , desrGetOffset :: Get Word64
   }
-instance Show EndianSizeReader where
-    show desr = "EndianSizeReader " ++ show (desrEndianReader desr) ++ " " ++ show (desrEncoding desr)
 
 -- | Type containing functions and data needed for decoding DWARF information.
 data Reader = Reader
@@ -66,8 +74,6 @@ data Reader = Reader
     , drLargestTargetAddress  :: Word64     -- ^ Largest permissible target address.
     , drGetTargetAddress :: Get Word64 -- ^ Action for reading a pointer for the target machine.
     }
-instance Show Reader where
-    show dr = "Reader " ++ show (drDesr dr) ++ " " ++ show (drTarget64 dr)
 
 -- Decode the DWARF size header entry, which specifies both the size of a DWARF subsection and whether this section uses DWARF32 or DWARF64.
 getUnitLength :: EndianReader -> Get (EndianSizeReader, Word64)

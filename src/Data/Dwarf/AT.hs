@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 module Data.Dwarf.AT where
 
 import qualified Data.ByteString as B
@@ -5,6 +6,9 @@ import           Data.Dwarf.Types
 import           Data.Int (Int64)
 import           Data.Text (Text)
 import           Data.Word (Word64)
+import           GHC.Generics (Generic)
+import           TextShow (TextShow(..))
+import           TextShow.Generic (genericShowbPrec)
 
 data DW_ATVAL
     = DW_ATVAL_INT    Int64
@@ -13,7 +17,9 @@ data DW_ATVAL
     | DW_ATVAL_STRING Text
     | DW_ATVAL_BLOB   B.ByteString
     | DW_ATVAL_BOOL   Bool
-    deriving (Eq, Ord, Show)
+    deriving (Eq, Ord, Show, Generic)
+
+instance TextShow DW_ATVAL where showbPrec = genericShowbPrec
 
 data DW_AT
     = DW_AT_sibling              -- ^ reference
@@ -109,7 +115,9 @@ data DW_AT
     | DW_AT_enum_class
     | DW_AT_linkage_name
     | DW_AT_user Word64          -- ^ user extension
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_AT where showbPrec = genericShowbPrec
 
 dw_at :: Word64 -> DW_AT
 dw_at 0x01 = DW_AT_sibling

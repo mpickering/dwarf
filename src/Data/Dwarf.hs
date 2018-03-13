@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 -- | Parses the DWARF 2 and DWARF 3 specifications at http://www.dwarfstd.org given
 -- the debug sections in ByteString form.
@@ -58,11 +60,17 @@ import           Data.Int (Int64)
 import qualified Data.Map as M
 import           Data.Maybe (listToMaybe)
 import           Data.Text (Text)
+import qualified Data.Text as Text
 import           Data.Traversable (traverse)
 import           Data.Word (Word64)
+import           GHC.Generics (Generic)
+import           TextShow (TextShow(..))
+import           TextShow.Generic (genericShowbPrec)
 
 newtype CUOffset = CUOffset Word64
-  deriving (Eq, Ord, Read, Show)
+  deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow CUOffset where showbPrec = genericShowbPrec
 
 -- Don't export a constructor, so users can only read DieID's, not
 -- create fake ones, which is slightly safer.
@@ -89,7 +97,9 @@ data CUContext = CUContext
 -- Abbreviation and form parsing
 ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 newtype AbbrevId = AbbrevId Word64
-  deriving (Eq, Ord, Read, Show)
+  deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow AbbrevId where showbPrec = genericShowbPrec
 
 data DW_ABBREV = DW_ABBREV
     { abbrevId        :: AbbrevId
@@ -180,7 +190,9 @@ align alignment = do
 data Range = Range
   { rangeBegin :: !Word64
   , rangeEnd :: !Word64
-  } deriving (Eq, Ord, Read, Show)
+  } deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow Range where showbPrec = genericShowbPrec
 
 -- Section 7.20 - Address Range Table
 -- Returns the ranges that belong to a CU
@@ -207,7 +219,7 @@ parseAranges endianess target64 aranges_section =
     let dr = endianReader endianess
     in strictGet (getAddressRangeTable target64 dr) aranges_section
 
-{-# ANN module "HLint: ignore Use camelCase" #-}
+{-# ANN module ("HLint: ignore Use camelCase"::String) #-}
 
 -- Section 7.21 - Macro Information
 data DW_MACINFO
@@ -216,7 +228,9 @@ data DW_MACINFO
     | DW_MACINFO_start_file Word64 Word64 -- ^ Marks start of file with the line where the file was included from and a source file index
     | DW_MACINFO_end_file                 -- ^ Marks end of file
     | DW_MACINFO_vendor_ext Word64 Text   -- ^ Implementation defined
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_MACINFO where showbPrec = genericShowbPrec
 
 -- | Retrieves the macro information for a compilation unit from a given substring of the .debug_macinfo section. The offset
 -- into the .debug_macinfo section is obtained from the DW_AT_macro_info attribute of a compilation unit DIE.
@@ -249,7 +263,9 @@ data DW_CIEFDE
         , fdeAddressRange    :: Word64
         , fdeInstructions    :: [DW_CFA]
         }
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_CIEFDE where showbPrec = genericShowbPrec
 
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
@@ -329,7 +345,7 @@ data DIERefs = DIERefs
   , dieRefsSiblingLeft  :: Maybe DieID   -- ^ Unique identifier of the left sibling
   , dieRefsSiblingRight :: Maybe DieID   -- ^ Unique identifier of the right sibling
   , dieRefsDIE :: DIE
-  } deriving (Show)
+  } deriving (Show, Generic)
 
 type DIEMap = M.Map DieID DIERefs
 type DIECollector = WriterT DIEMap
@@ -344,12 +360,17 @@ data DIE = DIE
     , dieChildren   :: [DIE]
     , dieReader     :: Reader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     }
-instance Show DIE where
-  show (DIE (DieID i) tag attrs children _) =
-    concat $ ["DIE@", show i, "{", show tag, " (", show (length children), " children)"] ++ concat
-    [ [" ", show attr, "=(", show val, ")"]
-    | (attr, val) <- attrs
-    ] ++ ["}"]
+instance Show DIE where show = Text.unpack . showt
+instance TextShow DIE where
+    showb (DIE (DieID i) tag attrs children _) =
+        mconcat $ mconcat
+        [ [ "DIE@", showb i, "{", showb tag, " (", showb (length children), " children)"]
+        , mconcat
+          [ [" ", showb attr, "=(", showb val, ")"]
+          | (attr, val) <- attrs
+          ]
+        , [ "}" ]
+        ]
 
 addRefs :: Maybe DieID -> [DIE] -> [DIERefs]
 addRefs mParent = go Nothing

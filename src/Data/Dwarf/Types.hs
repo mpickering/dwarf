@@ -1,12 +1,21 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Data.Dwarf.Types where
 
-import Data.Word (Word64)
+import           Data.Monoid ((<>))
+import qualified Data.Text as Text
+import           Data.Word (Word64)
+import           GHC.Generics (Generic)
+import           TextShow (TextShow(..))
+import           TextShow.Generic (genericShowbPrec)
 
 newtype DieID = DieID Word64
   deriving (Eq, Ord)
 
-instance Show DieID where
-  show (DieID x) = "DIE@" ++ show x
+instance TextShow DieID where
+  showb (DieID x) = "DIE@" <> showb x
+
+instance Show DieID where show = Text.unpack . showt
 
 data DW_DS
     = DW_DS_unsigned
@@ -14,7 +23,10 @@ data DW_DS
     | DW_DS_trailing_overpunch
     | DW_DS_leading_separate
     | DW_DS_trailing_separate
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_DS where showbPrec = genericShowbPrec
+
 dw_ds :: Word64 -> DW_DS
 dw_ds 0x01 = DW_DS_unsigned
 dw_ds 0x02 = DW_DS_leading_overpunch
@@ -27,7 +39,10 @@ data DW_END
     = DW_END_default
     | DW_END_big
     | DW_END_little
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_END where showbPrec = genericShowbPrec
+
 dw_end :: Word64 -> DW_END
 dw_end 0x00 = DW_END_default
 dw_end 0x01 = DW_END_big
@@ -38,7 +53,10 @@ data DW_ACCESS
     = DW_ACCESS_public
     | DW_ACCESS_protected
     | DW_ACCESS_private
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_ACCESS where showbPrec = genericShowbPrec
+
 dw_access :: Word64 -> DW_ACCESS
 dw_access 0x01 = DW_ACCESS_public
 dw_access 0x02 = DW_ACCESS_protected
@@ -49,7 +67,10 @@ data DW_VIS
     = DW_VIS_local
     | DW_VIS_exported
     | DW_VIS_qualified
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_VIS where showbPrec = genericShowbPrec
+
 dw_vis :: Word64 -> DW_VIS
 dw_vis 0x01 = DW_VIS_local
 dw_vis 0x02 = DW_VIS_exported
@@ -60,7 +81,10 @@ data DW_VIRTUALITY
     = DW_VIRTUALITY_none
     | DW_VIRTUALITY_virtual
     | DW_VIRTUALITY_return_virtual
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_VIRTUALITY where showbPrec = genericShowbPrec
+
 dw_virtuality :: Word64 -> DW_VIRTUALITY
 dw_virtuality 0x00 = DW_VIRTUALITY_none
 dw_virtuality 0x01 = DW_VIRTUALITY_virtual
@@ -88,7 +112,10 @@ data DW_LANG
     | DW_LANG_UPC
     | DW_LANG_D
     | DW_LANG_User Int -- 0x8000..0xFFFF
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_LANG where showbPrec = genericShowbPrec
+
 dw_lang :: Word64 -> DW_LANG
 dw_lang 0x0001 = DW_LANG_C89
 dw_lang 0x0002 = DW_LANG_C
@@ -120,7 +147,10 @@ data DW_ID
     | DW_ID_up_case
     | DW_ID_down_case
     | DW_ID_case_insensitive
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_ID where showbPrec = genericShowbPrec
+
 dw_id :: Word64 -> DW_ID
 dw_id 0x00 = DW_ID_case_sensitive
 dw_id 0x01 = DW_ID_up_case
@@ -132,7 +162,10 @@ data DW_CC
     = DW_CC_normal
     | DW_CC_program
     | DW_CC_nocall
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_CC where showbPrec = genericShowbPrec
+
 dw_cc :: Word64 -> DW_CC
 dw_cc 0x01 = DW_CC_normal
 dw_cc 0x02 = DW_CC_program
@@ -144,7 +177,10 @@ data DW_INL
     | DW_INL_inlined
     | DW_INL_declared_not_inlined
     | DW_INL_declared_inlined
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_INL where showbPrec = genericShowbPrec
+
 dw_inl :: Word64 -> DW_INL
 dw_inl 0x00 = DW_INL_not_inlined
 dw_inl 0x01 = DW_INL_inlined
@@ -155,7 +191,10 @@ dw_inl n = error $ "Unrecognized DW_INL " ++ show n
 data DW_ORD
     = DW_ORD_row_major
     | DW_ORD_col_major
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_ORD where showbPrec = genericShowbPrec
+
 dw_ord :: Word64 -> DW_ORD
 dw_ord 0x00 = DW_ORD_row_major
 dw_ord 0x01 = DW_ORD_col_major
@@ -164,7 +203,10 @@ dw_ord n = error $ "Unrecognized DW_ORD " ++ show n
 data DW_DSC
     = DW_DSC_label
     | DW_DSC_range
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_DSC where showbPrec = genericShowbPrec
+
 dw_dsc :: Word64 -> DW_DSC
 dw_dsc 0x00 = DW_DSC_label
 dw_dsc 0x01 = DW_DSC_range

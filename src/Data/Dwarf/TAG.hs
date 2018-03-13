@@ -1,9 +1,13 @@
+{-# LANGUAGE DeriveGeneric #-}
 module Data.Dwarf.TAG where
 
 import Control.Applicative (pure)
 import Data.Binary.Get (Get)
 import Data.Dwarf.Utils
 import Data.Word (Word64)
+import GHC.Generics (Generic)
+import TextShow (TextShow(..))
+import TextShow.Generic (genericShowbPrec)
 
 data DW_TAG
     = DW_TAG_array_type
@@ -64,7 +68,9 @@ data DW_TAG
     | DW_TAG_condition
     | DW_TAG_shared_type
     | DW_TAG_user Word64 -- index into the user range of tags 0x4080 becomes 0
-    deriving (Eq, Ord, Read, Show)
+    deriving (Eq, Ord, Read, Show, Generic)
+
+instance TextShow DW_TAG where showbPrec = genericShowbPrec
 
 getDW_TAG :: Get DW_TAG
 getDW_TAG = getULEB128 >>= dw_tag
