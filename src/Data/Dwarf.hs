@@ -59,11 +59,13 @@ import           Data.Dwarf.Utils
 import           Data.Int (Int64)
 import qualified Data.Map as M
 import           Data.Maybe (listToMaybe)
+import           Data.String (IsString(..))
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Traversable (traverse)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
+import           Numeric (showHex)
 import           TextShow (TextShow(..))
 import           TextShow.Generic (genericShowbPrec)
 
@@ -364,7 +366,7 @@ instance Show DIE where show = Text.unpack . showt
 instance TextShow DIE where
     showb (DIE (DieID i) tag attrs children _) =
         mconcat $ mconcat
-        [ [ "DIE@", showb i, "{", showb tag, " (", showb (length children), " children)"]
+        [ [ "DIE@", fromString (showHex i ""), "{", showb tag, " (", showb (length children), " children)"]
         , mconcat
           [ [" ", showb attr, "=(", showb val, ")"]
           | (attr, val) <- attrs
