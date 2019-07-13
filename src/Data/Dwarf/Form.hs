@@ -3,8 +3,6 @@ module Data.Dwarf.Form where
 
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import TextShow (TextShow(..))
-import TextShow.Generic (genericShowbPrec)
 
 data DW_FORM
     = DW_FORM_addr              -- ^ address
@@ -34,7 +32,6 @@ data DW_FORM
     | DW_FORM_ref_sig8            -- ^ (Dwarf 4)
     deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_FORM where showbPrec = genericShowbPrec
 
 dw_form :: Word64 -> DW_FORM
 dw_form 0x01 = DW_FORM_addr

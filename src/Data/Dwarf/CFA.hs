@@ -9,8 +9,6 @@ import           Data.Dwarf.Utils
 import           Data.Int (Int64)
 import           Data.Word (Word8, Word16, Word32, Word64)
 import           GHC.Generics (Generic)
-import           TextShow (TextShow(..))
-import           TextShow.Generic (genericShowbPrec)
 
 -- Section 7.22 - Call Frame
 data DW_CFA
@@ -42,7 +40,6 @@ data DW_CFA
     | DW_CFA_val_expression Word64 B.ByteString
     deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_CFA where showbPrec = genericShowbPrec
 
 getDW_CFA :: Reader -> Get DW_CFA
 getDW_CFA dr = do

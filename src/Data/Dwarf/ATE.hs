@@ -3,8 +3,6 @@ module Data.Dwarf.ATE where
 
 import Data.Word (Word64)
 import GHC.Generics (Generic)
-import TextShow (TextShow(..))
-import TextShow.Generic (genericShowbPrec)
 
 data DW_ATE
     = DW_ATE_address
@@ -24,7 +22,6 @@ data DW_ATE
     | DW_ATE_decimal_float
     deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_ATE where showbPrec = genericShowbPrec
 
 dw_ate :: Word64 -> DW_ATE
 dw_ate 0x01 = DW_ATE_address

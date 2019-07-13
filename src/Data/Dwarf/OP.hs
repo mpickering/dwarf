@@ -8,8 +8,6 @@ import           Data.Dwarf.Utils
 import           Data.Int (Int8, Int16, Int32, Int64)
 import           Data.Word (Word8, Word16, Word32, Word64)
 import           GHC.Generics (Generic)
-import           TextShow (TextShow(..))
-import           TextShow.Generic (genericShowbPrec)
 
 data DW_OP
     = DW_OP_addr Word64
@@ -73,7 +71,6 @@ data DW_OP
     | DW_OP_bit_piece Word64 Word64
     deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_OP where showbPrec = genericShowbPrec
 
 -- | Parse a ByteString into a DWARF opcode. This will be needed for further decoding of DIE attributes.
 parseDW_OP :: Reader -> B.ByteString -> DW_OP
