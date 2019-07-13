@@ -15,8 +15,6 @@ import           Data.Text (Text)
 import           Data.Traversable (traverse)
 import           Data.Word (Word8, Word64)
 import           GHC.Generics (Generic)
-import           TextShow (TextShow(..))
-import           TextShow.Generic (genericShowbPrec)
 
 -- Section 7.21 - Line Number Information
 data DW_LNI
@@ -38,7 +36,6 @@ data DW_LNI
     | DW_LNE_define_file Text Word64 Word64 Word64
     deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_LNI where showbPrec = genericShowbPrec
 
 getDW_LNI :: Reader -> Int64 -> Word8 -> Word8 -> Word64 -> Get DW_LNI
 getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = getWord8 >>= getDW_LNI_
@@ -137,7 +134,6 @@ data DW_LNE = DW_LNE
     , lnmFiles         :: [(Text, Word64, Word64, Word64)]
     } deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_LNE where showbPrec = genericShowbPrec
 
 defaultLNE :: Bool -> [(Text, Word64, Word64, Word64)] -> DW_LNE
 defaultLNE is_stmt files = DW_LNE

@@ -6,23 +6,18 @@ import           Data.Binary.Get (getWord16be, getWord32be, getWord64be, getWord
 import qualified Data.Binary.Get as Get
 import           Data.Word (Word16, Word32, Word64)
 import           GHC.Generics (Generic)
-import           TextShow (TextShow(..))
-import           TextShow.Generic (genericShowbPrec)
 
 data Endianess = LittleEndian | BigEndian
   deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow Endianess where showbPrec = genericShowbPrec
 
 data Encoding = Encoding32 | Encoding64
   deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow Encoding where showbPrec = genericShowbPrec
 
 data TargetSize = TargetSize32 | TargetSize64
   deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow TargetSize where showbPrec = genericShowbPrec
 
 endianReader :: Endianess -> EndianReader
 endianReader LittleEndian = EndianReader LittleEndian getWord16le getWord32le getWord64le

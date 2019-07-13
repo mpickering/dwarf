@@ -66,13 +66,10 @@ import           Data.Traversable (traverse)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Numeric (showHex)
-import           TextShow (TextShow(..))
-import           TextShow.Generic (genericShowbPrec)
 
 newtype CUOffset = CUOffset Word64
   deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow CUOffset where showbPrec = genericShowbPrec
 
 -- Don't export a constructor, so users can only read DieID's, not
 -- create fake ones, which is slightly safer.
@@ -101,7 +98,6 @@ data CUContext = CUContext
 newtype AbbrevId = AbbrevId Word64
   deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow AbbrevId where showbPrec = genericShowbPrec
 
 data DW_ABBREV = DW_ABBREV
     { abbrevId        :: AbbrevId
@@ -194,7 +190,6 @@ data Range = Range
   , rangeEnd :: !Word64
   } deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow Range where showbPrec = genericShowbPrec
 
 -- Section 7.20 - Address Range Table
 -- Returns the ranges that belong to a CU
@@ -232,7 +227,6 @@ data DW_MACINFO
     | DW_MACINFO_vendor_ext Word64 Text   -- ^ Implementation defined
     deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_MACINFO where showbPrec = genericShowbPrec
 
 -- | Retrieves the macro information for a compilation unit from a given substring of the .debug_macinfo section. The offset
 -- into the .debug_macinfo section is obtained from the DW_AT_macro_info attribute of a compilation unit DIE.
@@ -267,7 +261,6 @@ data DW_CIEFDE
         }
     deriving (Eq, Ord, Read, Show, Generic)
 
-instance TextShow DW_CIEFDE where showbPrec = genericShowbPrec
 
 getCIEFDE :: Endianess -> TargetSize -> Get DW_CIEFDE
 getCIEFDE endianess target64 = do
@@ -362,13 +355,12 @@ data DIE = DIE
     , dieChildren   :: [DIE]
     , dieReader     :: Reader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     }
-instance Show DIE where show = Text.unpack . showt
-instance TextShow DIE where
-    showb (DIE (DieID i) tag attrs children _) =
+instance Show DIE where
+    show (DIE (DieID i) tag attrs children _) =
         mconcat $ mconcat
-        [ [ "DIE@", fromString (showHex i ""), "{", showb tag, " (", showb (length children), " children)"]
+        [ [ "DIE@", fromString (showHex i ""), "{", show tag, " (", show (length children), " children)"]
         , mconcat
-          [ [" ", showb attr, "=(", showb val, ")"]
+          [ [" ", show attr, "=(", show val, ")"]
           | (attr, val) <- attrs
           ]
         , [ "}" ]
