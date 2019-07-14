@@ -34,6 +34,7 @@ data DW_LNI
     | DW_LNE_end_sequence
     | DW_LNE_set_address Word64
     | DW_LNE_define_file Text Word64 Word64 Word64
+    | DW_LNE_set_discriminator Word64
     deriving (Eq, Ord, Read, Show, Generic)
 
 
@@ -46,6 +47,7 @@ getDW_LNI dr line_base line_range opcode_base minimum_instruction_length = getWo
                       getDW_LNE_ 0x01 = pure DW_LNE_end_sequence
                       getDW_LNE_ 0x02 = pure DW_LNE_set_address <*> drGetTargetAddress dr
                       getDW_LNE_ 0x03 = pure DW_LNE_define_file <*> getUTF8Str0 <*> getULEB128 <*> getULEB128 <*> getULEB128
+                      getDW_LNE_ 0x04 = pure DW_LNE_set_discriminator <*> getULEB128
                       getDW_LNE_ n | 0x80 <= n && n <= 0xff = fail $ "User DW_LNE data requires extension of parser for code " ++ show n
                       getDW_LNE_ n = fail $ "Unexpected DW_LNE code " ++ show n
           getDW_LNI_ 0x01 = pure DW_LNS_copy
@@ -109,6 +111,9 @@ stepLineMachine is_stmt mil lnm (DW_LNS_set_epilogue_begin : xs) =
 stepLineMachine is_stmt mil lnm (DW_LNS_set_isa isa : xs) =
     let new = lnm { lnmISA = isa }
     in stepLineMachine is_stmt mil new xs
+stepLineMachine is_stmt mil lnm (DW_LNE_set_discriminator d : xs) =
+    let new = lnm { lnmDiscriminator = d }
+    in stepLineMachine is_stmt mil new xs
 stepLineMachine is_stmt mil lnm (DW_LNE_end_sequence : xs) =
     let row = lnm { lnmEndSequence = True }
         new = defaultLNE is_stmt (lnmFiles lnm)
@@ -131,6 +136,7 @@ data DW_LNE = DW_LNE
     , lnmPrologueEnd   :: Bool
     , lnmEpilogueBegin :: Bool
     , lnmISA           :: Word64
+    , lnmDiscriminator :: Word64
     , lnmFiles         :: [(Text, Word64, Word64, Word64)]
     } deriving (Eq, Ord, Read, Show, Generic)
 
@@ -147,6 +153,7 @@ defaultLNE is_stmt files = DW_LNE
     , lnmPrologueEnd   = False
     , lnmEpilogueBegin = False
     , lnmISA           = 0
+    , lnmDiscriminator = 0
     , lnmFiles         = files
     }
 
