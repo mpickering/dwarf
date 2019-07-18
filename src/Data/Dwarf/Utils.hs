@@ -3,14 +3,14 @@ module Data.Dwarf.Utils where
 import           Control.Applicative (Applicative(..), (<$>), (*>))
 import           Data.Binary.Get (getByteString, getWord8, Get, runGet)
 import qualified Data.Binary.Get as Get
-import           Data.Bits ((.|.), shiftL, clearBit, testBit)
+import           Data.Bits
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
-import           Data.Int (Int64)
+import           Data.Int (Int64, Int8)
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Encoding
-import           Data.Word (Word64)
+import           Data.Word (Word64, Word8)
 
 whileJust :: (Applicative m, Monad m) => m (Maybe a) -> m [a]
 whileJust act = go
@@ -52,20 +52,18 @@ getNonEmptyUTF8Str0 = do
   str <- getUTF8Str0
   pure $ if Text.null str then Nothing else Just str
 
--- Decode a signed little-endian base 128 encoded integer.
+-- | Get a signed int in Little Endian Base 128
+-- This is taken from the haskus package
 getSLEB128 :: Get Int64
-getSLEB128 =
-    let go acc shift = do
-        byte <- fromIntegral <$> getWord8 :: Get Word64
-        let temp = acc .|. (clearBit byte 7 `shiftL` shift)
-        if testBit byte 7 then
-            go temp (shift + 7)
-         else
-            if shift < 32  && testBit byte 6 then
-                pure $ fromIntegral $ temp .|. (maxBound `shiftL` shift)
-             else
-                pure $ fromIntegral temp
-    in go 0 0
+getSLEB128 = do
+   let toInt8 :: Word8 -> Int8
+       toInt8 = fromIntegral
+   a <- getWord8
+   if not (testBit a 7)
+      then return . fromIntegral . toInt8 $ (a .&. 0x7f) .|. ((a .&. 0x40) `shiftL` 1)
+      else do
+         b <- getSLEB128
+         return $ (b `shiftL` 7) .|. (fromIntegral (a .&. 0x7f))
 
 -- Decode an unsigned little-endian base 128 encoded integer.
 getULEB128 :: Get Word64
