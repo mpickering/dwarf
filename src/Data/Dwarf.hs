@@ -7,7 +7,7 @@ module Data.Dwarf
   ( Endianess(..), TargetSize(..)
   , Sections(..)
   , parseInfo
-  , DieID, dieID, DIE(..), (!?)
+  , DieID, dieID, DIE(..), (!?), LNE(..), LNEFile(..)
   , DIERefs(..), DIEMap
   , Reader(..)
   , parseAranges
