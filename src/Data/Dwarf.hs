@@ -353,7 +353,7 @@ data DIE = DIE
     { dieId         :: DieID              -- ^ Unique identifier for this entry.
     , dieTag        :: DW_TAG              -- ^ Type tag.
     , dieAttributes :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
-    , dieLineInfo   :: ([Text], [DW_LNE])
+    , dieLineInfo   :: Maybe LNE
     , dieChildren   :: [DIE]
     , dieReader     :: Reader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     }
@@ -444,13 +444,13 @@ getDIEAndDescendants cuContext = do
   where
     dr = cuReader cuContext
 
-getLineInfo :: CUContext -> Maybe Word64 -> ([Text], [DW_LNE])
-getLineInfo _ Nothing = ([], [])
+getLineInfo :: CUContext -> Maybe Word64 -> Maybe LNE
+getLineInfo _ Nothing = Nothing
 getLineInfo c (Just o) = do
  let info_bs = dsLineSection (cuSections c)
      target_size  = drTarget64 (cuReader c)
      endian_reader = desrEndianReader (drDesr (cuReader c))
- getAt (getLNE target_size endian_reader) o info_bs
+ Just (getAt (getLNE target_size endian_reader) o info_bs)
 
 getCUHeader ::
   EndianReader -> Sections ->
