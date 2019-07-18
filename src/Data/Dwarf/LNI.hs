@@ -172,10 +172,10 @@ data LNEFile = LNEFile
   } deriving (Eq, Ord, Read, Show, Generic)
 
 data LNE = LNE
-  { dirs :: [Text]
-  , files :: [LNEFile]
-  , lines :: [DW_LNE]
-  }
+  { lneDirs :: [Text]
+  , lneFiles :: [LNEFile]
+  , lneLines :: [DW_LNE]
+  } deriving (Eq, Ord, Read, Show, Generic)
 
 getDebugLineFileNames :: Get [LNEFile]
 getDebugLineFileNames = whileJust $ traverse entry =<< getNonEmptyUTF8Str0
