@@ -98,6 +98,7 @@ data DW_LANG
     | DW_LANG_ObjC_plus_plus
     | DW_LANG_UPC
     | DW_LANG_D
+    | DW_LANG_Haskell
     | DW_LANG_User Int -- 0x8000..0xFFFF
     deriving (Eq, Ord, Read, Show, Generic)
 
@@ -122,6 +123,7 @@ dw_lang 0x0010 = DW_LANG_ObjC
 dw_lang 0x0011 = DW_LANG_ObjC_plus_plus
 dw_lang 0x0012 = DW_LANG_UPC
 dw_lang 0x0013 = DW_LANG_D
+dw_lang 0x0018 = DW_LANG_Haskell
 dw_lang n
   | 0x8000 <= n && n <= 0xffff =
     DW_LANG_User $ fromIntegral n
