@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Data.Dwarf.OP where
 
-import           Control.Applicative (Applicative(..), (<$>))
 import           Data.Binary.Get (getWord8, Get)
 import qualified Data.ByteString as B
 import           Data.Dwarf.Reader

@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Data.Dwarf.Reader where
 
-import           Control.Applicative ((<$>), pure)
 import           Data.Binary.Get (getWord16be, getWord32be, getWord64be, getWord16le, getWord32le, getWord64le, Get)
 import qualified Data.Binary.Get as Get
 import           Data.Word (Word16, Word32, Word64)

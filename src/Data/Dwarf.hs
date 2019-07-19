@@ -36,7 +36,6 @@ module Data.Dwarf
   , DW_DSC(..), dw_dsc
   ) where
 
-import           Control.Applicative (Applicative(..), (<$>), (<$))
 import           Control.Arrow ((&&&), (***))
 import           Control.Monad ((<=<))
 import           Control.Monad.Trans.Class (lift)
@@ -61,8 +60,6 @@ import qualified Data.Map as M
 import           Data.Maybe (listToMaybe)
 import           Data.String (IsString(..))
 import           Data.Text (Text)
-import qualified Data.Text as Text
-import           Data.Traversable (traverse)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Numeric (showHex)

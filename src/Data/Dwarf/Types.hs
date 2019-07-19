@@ -2,8 +2,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Data.Dwarf.Types where
 
-import           Data.Monoid ((<>))
-import qualified Data.Text as Text
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           TextShow (TextShow(..))

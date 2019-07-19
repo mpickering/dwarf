@@ -2,7 +2,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Data.Dwarf.LNI where
 
-import           Control.Applicative (Applicative(..), (<$>))
 import           Control.Monad (replicateM)
 import           Data.Binary (Binary(..), Get)
 import           Data.Binary.Get (getWord8)
@@ -12,7 +11,6 @@ import           Data.Dwarf.Reader
 import           Data.Dwarf.Utils
 import           Data.Int (Int8, Int64)
 import           Data.Text (Text)
-import           Data.Traversable (traverse)
 import           Data.Word (Word8, Word64)
 import           GHC.Generics (Generic)
 import           TextShow (TextShow(..))

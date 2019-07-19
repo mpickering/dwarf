@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Data.Dwarf.CFA where
 
-import           Control.Applicative (Applicative(..))
 import           Data.Binary.Get (getWord8, Get)
 import           Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as B

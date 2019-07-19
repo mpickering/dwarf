@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Data.Dwarf.TAG where
 
-import Control.Applicative (pure)
 import Data.Binary.Get (Get)
 import Data.Dwarf.Utils
 import Data.Word (Word64)

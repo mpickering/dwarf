@@ -1,6 +1,5 @@
 module Data.Dwarf.Utils where
 
-import           Control.Applicative (Applicative(..), (<$>), (*>))
 import           Data.Binary.Get (getByteString, getWord8, Get, runGet)
 import qualified Data.Binary.Get as Get
 import           Data.Bits ((.|.), shiftL, clearBit, testBit)
@@ -70,11 +69,11 @@ getSLEB128 =
 -- Decode an unsigned little-endian base 128 encoded integer.
 getULEB128 :: Get Word64
 getULEB128 =
-    let go acc shift = do
+    let go acc shift' = do
         byte <- fromIntegral <$> getWord8 :: Get Word64
-        let temp = acc .|. (clearBit byte 7 `shiftL` shift)
+        let temp = acc .|. (clearBit byte 7 `shiftL` shift')
         if testBit byte 7 then
-            go temp (shift + 7)
+            go temp (shift' + 7)
          else
             pure temp
     in go 0 0
