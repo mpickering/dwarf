@@ -7,7 +7,7 @@ module Data.Dwarf
   ( Endianess(..), TargetSize(..)
   , Sections(..)
   , parseInfo
-  , DieID, dieID, DIE(..), (!?)
+  , DieID, dieID, DIE(..), (!?), LNE(..), LNEFile(..)
   , DIERefs(..), DIEMap
   , Reader(..)
   , parseAranges
@@ -80,6 +80,7 @@ data Sections = Sections
   { dsInfoSection :: B.ByteString
   , dsAbbrevSection :: B.ByteString
   , dsStrSection :: B.ByteString
+  , dsLineSection :: B.ByteString
   }
 
 data CUContext = CUContext
@@ -349,11 +350,12 @@ data DIE = DIE
     { dieId         :: DieID              -- ^ Unique identifier for this entry.
     , dieTag        :: DW_TAG              -- ^ Type tag.
     , dieAttributes :: [(DW_AT, DW_ATVAL)] -- ^ Attribute tag and value pairs.
+    , dieLineInfo   :: Maybe LNE
     , dieChildren   :: [DIE]
     , dieReader     :: Reader         -- ^ Decoder used to decode this entry. May be needed to further parse attribute values.
     }
 instance Show DIE where
-    show (DIE (DieID i) tag attrs children _) =
+    show (DIE (DieID i) tag attrs _ children _) =
         mconcat $ mconcat
         [ [ "DIE@", fromString (showHex i ""), "{", show tag, " (", show (length children), " children)"]
         , mconcat
@@ -429,10 +431,23 @@ getDIEAndDescendants cuContext = do
         if abbrevChildren abbrev
         then getDieAndSiblings offset cuContext
         else pure []
-      pure $ DIE offset tag (zip attrs values) children dr
+      let stmt_list_offset =
+            case map snd $ filter ((== DW_AT_stmt_list) . fst) $ zip attrs values of
+              [DW_ATVAL_UINT line_offset] -> Just line_offset
+              _ -> Nothing
+      let line_info = getLineInfo cuContext stmt_list_offset
+      pure $ DIE offset tag (zip attrs values) line_info children dr
   traverse go =<< lift getMAbbrevId
   where
     dr = cuReader cuContext
+
+getLineInfo :: CUContext -> Maybe Word64 -> Maybe LNE
+getLineInfo _ Nothing = Nothing
+getLineInfo c (Just o) = do
+ let info_bs = dsLineSection (cuSections c)
+     target_size  = drTarget64 (cuReader c)
+     endian_reader = desrEndianReader (drDesr (cuReader c))
+ Just (getAt (getLNE target_size endian_reader) o info_bs)
 
 getCUHeader ::
   EndianReader -> Sections ->
